@@ -35,10 +35,13 @@ export default function Player({
   epg,
   meta,
   resumeAt = 0,
+  durationHint = 0,
+  tracks = null,
   initialMuted,
   liveChannels = [],
   onLiveChannelChange,
   onMutedChange,
+  onUrlChange,
   onClose,
 }) {
   const videoRef = useRef(null)
@@ -60,7 +63,12 @@ export default function Player({
   const [showGuide, setShowGuide] = useState(false)
   const [zapBanner, setZapBanner] = useState(null)
   const [switching, setSwitching] = useState(false)
+  const [selectedAudio, setSelectedAudio] = useState('')
+  const [selectedSubtitle, setSelectedSubtitle] = useState('-1')
   const isLive = type === 'live'
+  const isVodLike = type === 'vod' || type === 'series'
+  const audioTracks = tracks?.audio || []
+  const subtitleTracks = tracks?.subtitles || []
   const canZap = isLive && liveChannels.length > 1 && typeof onLiveChannelChange === 'function'
   const currentChannelId = meta?.itemId ? String(meta.itemId) : ''
   const currentChannelIndex = liveChannels.findIndex(
@@ -97,6 +105,15 @@ export default function Player({
     }
     return undefined
   }, [url, title, isLive, currentChannelNumber])
+
+  useEffect(() => {
+    if (audioTracks.length) {
+      setSelectedAudio(String(audioTracks[0].index))
+    } else {
+      setSelectedAudio('')
+    }
+    setSelectedSubtitle('-1')
+  }, [url, audioTracks])
 
   useEffect(() => {
     if (!canZap) return undefined
@@ -246,8 +263,11 @@ export default function Player({
       if (video.buffered.length) {
         setBuffered(video.buffered.end(video.buffered.length - 1))
       }
-      if (meta?.itemId && (type === 'vod' || type === 'series')) {
+      if (meta?.itemId && isVodLike) {
         const now = Date.now()
+        const totalDuration = (video.duration > 0 && Number.isFinite(video.duration))
+          ? video.duration
+          : durationHint
         if (now - lastSavedRef.current > 12000 && position > 0) {
           lastSavedRef.current = now
           saveWatchProgress({
@@ -258,14 +278,17 @@ export default function Player({
             image: meta.image || '',
             ext: meta.ext || '',
             position_seconds: position,
-            duration_seconds: video.duration || null,
+            duration_seconds: totalDuration || null,
           })
         }
       }
     }
     const onMeta = () => {
-      const total = video.duration || 0
-      setDuration(total)
+      const raw = video.duration || 0
+      const total = (raw > 0 && Number.isFinite(raw) && raw < 1e8)
+        ? raw
+        : (durationHint || 0)
+      if (total > 0) setDuration(total)
       if (!isLive && resumeAt > 0 && !resumeAppliedRef.current && total > resumeAt + 5) {
         video.currentTime = resumeAt
         resumeAppliedRef.current = true
@@ -312,7 +335,10 @@ export default function Player({
 
     return () => {
       if (stallInterval) window.clearInterval(stallInterval)
-      if (meta?.itemId && (type === 'vod' || type === 'series') && video.currentTime > 0) {
+      if (meta?.itemId && isVodLike && video.currentTime > 0) {
+        const totalDuration = (video.duration > 0 && Number.isFinite(video.duration))
+          ? video.duration
+          : durationHint
         saveWatchProgress({
           content_type: meta.contentType || type,
           item_id: meta.itemId,
@@ -321,7 +347,7 @@ export default function Player({
           image: meta.image || '',
           ext: meta.ext || '',
           position_seconds: video.currentTime,
-          duration_seconds: video.duration || null,
+          duration_seconds: totalDuration || null,
         })
       }
       if (mpegtsPlayer) {
@@ -345,7 +371,32 @@ export default function Player({
       video.removeAttribute('src')
       video.load()
     }
-  }, [url, type, isLive, meta, resumeAt, title, initialMuted])
+  }, [url, type, isLive, isVodLike, meta, resumeAt, title, initialMuted, durationHint])
+
+  useEffect(() => {
+    if (!isLive && durationHint > 0) {
+      setDuration(durationHint)
+    }
+  }, [url, durationHint, isLive])
+
+  async function changeAudioTrack(value) {
+    if (!value || !meta?.playPath || !onUrlChange) return
+    const resumePosition = videoRef.current?.currentTime || 0
+    setSelectedAudio(value)
+    await onUrlChange(meta.playPath, Number(value), resumePosition)
+  }
+
+  function changeSubtitleTrack(value) {
+    setSelectedSubtitle(value)
+    const video = videoRef.current
+    if (!video?.textTracks) return
+    for (let i = 0; i < video.textTracks.length; i += 1) {
+      video.textTracks[i].mode = 'disabled'
+    }
+    if (value === '-1') return
+    const track = video.textTracks[0]
+    if (track) track.mode = 'showing'
+  }
 
   function toggleMute() {
     const video = videoRef.current
@@ -393,7 +444,19 @@ export default function Player({
     onMutedChange?.(nextMuted)
   }
 
-  const progressMax = duration > 0 ? duration : buffered || 100
+  const totalDuration = durationHint > 0
+    ? durationHint
+    : ((duration > 0 && Number.isFinite(duration)) ? duration : 0)
+  const playedPercent = totalDuration > 0
+    ? Math.min(100, (current / totalDuration) * 100)
+    : 0
+  const bufferedPercent = totalDuration > 0
+    ? Math.min(100, (buffered / totalDuration) * 100)
+    : 0
+  const activeSubtitle = subtitleTracks.find((track) => String(track.index) === selectedSubtitle)
+  const subtitleSrc = activeSubtitle?.url
+    ? (activeSubtitle.url.startsWith('/') ? `${window.location.origin}${activeSubtitle.url}` : activeSubtitle.url)
+    : null
   const currentProgram = epg?.current
   const upcomingPrograms = (epg?.listings || []).filter((item) => !item.now).slice(0, 4)
 
@@ -409,7 +472,18 @@ export default function Player({
       {error ? <div className="player-error">{error}</div> : null}
       {isLive && muted ? <div className="player-muted-hint">Pulsa ▶ o 🔊 para activar el sonido</div> : null}
       <div className="player-stage">
-        <video ref={videoRef} className="player-video" playsInline muted={muted} />
+        <video ref={videoRef} className="player-video" playsInline muted={muted}>
+          {subtitleSrc ? (
+            <track
+              key={subtitleSrc}
+              kind="subtitles"
+              src={subtitleSrc}
+              srcLang={activeSubtitle?.language || 'es'}
+              label={activeSubtitle?.label || 'Subtítulos'}
+              default
+            />
+          ) : null}
+        </video>
         {isLive && zapBanner ? (
           <div className="player-zap-banner">
             <span className="player-zap-number">{zapBanner.number ?? '—'}</span>
@@ -525,7 +599,7 @@ export default function Player({
         ) : (
           <span className="player-time">
             {formatTime(current)}
-            {` / ${duration > 0 ? formatTime(duration) : '--:--'}`}
+            {` / ${totalDuration > 0 ? formatTime(totalDuration) : '--:--'}`}
           </span>
         )}
         {isLive ? (
@@ -533,15 +607,28 @@ export default function Player({
             <span className="player-live-bar-fill" />
           </div>
         ) : (
-          <input
-            className="player-seek"
-            type="range"
-            min="0"
-            max={progressMax}
-            step="0.1"
-            value={Math.min(current, progressMax)}
-            onChange={(e) => seek(e.target.value)}
-          />
+          <div className="player-seek-wrap">
+            <div className="player-seek-track" aria-hidden="true">
+              <span
+                className="player-seek-buffered"
+                style={{ width: `${bufferedPercent}%` }}
+              />
+              <span
+                className="player-seek-played"
+                style={{ width: `${playedPercent}%` }}
+              />
+            </div>
+            <input
+              className="player-seek"
+              type="range"
+              min="0"
+              max={totalDuration > 0 ? totalDuration : 100}
+              step="0.1"
+              value={Math.min(current, totalDuration > 0 ? totalDuration : current)}
+              onChange={(e) => seek(e.target.value)}
+              aria-label="Posición de reproducción"
+            />
+          </div>
         )}
         <button type="button" className="player-btn" onClick={toggleMute} aria-label={muted ? 'Activar sonido' : 'Silenciar'}>
           {muted || volume === 0 ? '🔇' : '🔊'}
@@ -563,6 +650,30 @@ export default function Player({
         >
           ⛶
         </button>
+        {isVodLike && audioTracks.length > 1 ? (
+          <label className="player-track-select">
+            <span>Audio</span>
+            <select value={selectedAudio} onChange={(e) => changeAudioTrack(e.target.value)}>
+              {audioTracks.map((track) => (
+                <option key={track.index} value={track.index}>{track.label}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {isVodLike && subtitleTracks.length > 0 ? (
+          <label className="player-track-select">
+            <span>Subs</span>
+            <select
+              value={selectedSubtitle}
+              onChange={(e) => changeSubtitleTrack(e.target.value)}
+            >
+              <option value="-1">Off</option>
+              {subtitleTracks.map((track) => (
+                <option key={track.index} value={track.index}>{track.label}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
       </div>
     </div>
   )

@@ -3,11 +3,11 @@ import { Link } from 'react-router-dom'
 import {
   buildPlayerSession,
   fetchCatalog,
-  fetchContinueWatching,
-  fetchPlayUrl,
+  fetchPlayUrlWithAudio,
   fetchViewHistory,
 } from '../api'
 import ContentRow from '../components/ContentRow'
+import ContinueWatchingRow from '../components/ContinueWatchingRow'
 import LoadingState from '../components/LoadingState'
 import MediaCard from '../components/MediaCard'
 import Navbar from '../components/Navbar'
@@ -29,7 +29,6 @@ export default function Home() {
   const [live, setLive] = useState([])
   const [movies, setMovies] = useState([])
   const [series, setSeries] = useState([])
-  const [continueItems, setContinueItems] = useState([])
   const [recentChannels, setRecentChannels] = useState([])
   const [loading, setLoading] = useState({ live: true, movies: true, series: true, library: true })
   const [errors, setErrors] = useState({})
@@ -61,14 +60,8 @@ export default function Home() {
       .catch((err) => setErrors((e) => ({ ...e, series: err.message })))
       .finally(() => setLoading((s) => ({ ...s, series: false })))
 
-    Promise.all([
-      fetchContinueWatching(12),
-      fetchViewHistory('live', 12),
-    ])
-      .then(([continueWatching, history]) => {
-        setContinueItems(continueWatching)
-        setRecentChannels(history)
-      })
+    fetchViewHistory('live', 12)
+      .then((history) => setRecentChannels(history))
       .catch((err) => setErrors((e) => ({ ...e, library: err.message })))
       .finally(() => setLoading((s) => ({ ...s, library: false })))
   }, [])
@@ -124,26 +117,15 @@ export default function Home() {
     setPlayer(session)
   }
 
-  async function resumeItem(item) {
-    const ext = item.ext || 'mp4'
-    const playPath = item.content_type === 'series'
-      ? `/catalog/series/episode/${item.item_id}/play`
-      : `/catalog/vod/${item.item_id}/play?ext=${ext}`
-    const playData = await fetchPlayUrl(playPath)
-    setPlayer({
-      title: item.title,
+  async function handleAudioChange(playPath, audioIndex, resumePosition) {
+    const playData = await fetchPlayUrlWithAudio(playPath, audioIndex)
+    setPlayer((prev) => ({
+      ...prev,
       url: playData.url,
-      type: item.content_type,
-      resumeAt: item.position_seconds || 0,
-      meta: {
-        contentType: item.content_type,
-        itemId: item.item_id,
-        seriesId: item.series_id || '',
-        title: item.title,
-        image: item.image,
-        ext,
-      },
-    })
+      tracks: playData.tracks || prev?.tracks,
+      durationHint: playData.duration_seconds || prev?.durationHint,
+      resumeAt: resumePosition,
+    }))
   }
 
   function playSeries(item) {
@@ -160,6 +142,9 @@ export default function Home() {
       {Object.entries(errors).map(([key, msg]) => (
         <div key={key} className="page-error">{key}: {msg}</div>
       ))}
+      <div className="page-content page-content--padded-top">
+        <ContinueWatchingRow onPlay={setPlayer} />
+      </div>
       {anyLoading && !hero ? <LoadingState message="Conectando con el proveedor IPTV…" /> : null}
       {allEmpty ? (
         <div className="page-empty">
@@ -181,28 +166,6 @@ export default function Home() {
         </section>
       ) : null}
       <main className="page-content">
-        {loading.library ? <LoadingState message="Cargando tu biblioteca…" /> : null}
-        {!loading.library && continueItems.length > 0 ? (
-          <section className="library-row">
-            <h2 className="content-row-title">Seguir viendo</h2>
-            <div className="content-row-track">
-              {continueItems.map((item) => (
-                <button
-                  key={`${item.content_type}-${item.item_id}`}
-                  type="button"
-                  className="resume-card"
-                  onClick={() => resumeItem(item)}
-                >
-                  <div className="resume-card-image">
-                    {item.image ? <img src={item.image} alt={item.title} /> : <span>{item.title?.slice(0, 1)}</span>}
-                    <span className="resume-card-progress" style={{ width: `${item.percent || 0}%` }} />
-                  </div>
-                  <strong>{item.title}</strong>
-                </button>
-              ))}
-            </div>
-          </section>
-        ) : null}
         {!loading.library && recentChannels.length > 0 ? (
           <section className="library-row">
             <h2 className="content-row-title">Canales recientes</h2>
@@ -241,11 +204,14 @@ export default function Home() {
           type={player.type}
           epg={player.epg}
           meta={player.meta}
+          durationHint={player.durationHint || 0}
+          tracks={player.tracks}
           resumeAt={player.resumeAt || 0}
           initialMuted={player.type === 'live' ? !liveAudioOn : undefined}
           liveChannels={player.type === 'live' ? live : []}
           onLiveChannelChange={player.type === 'live' ? changeLiveChannel : undefined}
           onMutedChange={player.type === 'live' ? (isMuted) => setLiveAudioOn(!isMuted) : undefined}
+          onUrlChange={player.type !== 'live' ? handleAudioChange : undefined}
           onClose={() => {
             setPlayer(null)
             setLiveAudioOn(false)

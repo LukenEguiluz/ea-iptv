@@ -3,9 +3,11 @@ import { Link, useParams } from 'react-router-dom'
 import {
   fetchCatalog,
   fetchPlayUrl,
+  fetchPlayUrlWithAudio,
   fetchWatchProgress,
   recordViewHistory,
 } from '../api'
+import ContinueWatchingRow from '../components/ContinueWatchingRow'
 import Navbar from '../components/Navbar'
 import Player from '../components/Player'
 
@@ -42,6 +44,8 @@ export default function SeriesDetail() {
         title: episode.title || info?.info?.name,
         url: data.url,
         type: data.type,
+        durationHint: data.duration_seconds || progress?.duration_seconds || 0,
+        tracks: data.tracks || null,
         resumeAt: progress?.position_seconds || 0,
         meta: {
           contentType: 'series',
@@ -50,6 +54,7 @@ export default function SeriesDetail() {
           title: episode.title || info?.info?.name,
           image: info?.info?.cover || info?.info?.cover_big || '',
           ext: data.ext || 'mkv',
+          playPath: `/catalog/series/episode/${episode.id}/play`,
         },
       })
       setError('')
@@ -60,11 +65,23 @@ export default function SeriesDetail() {
 
   const seasons = info?.episodes ? Object.entries(info.episodes) : []
 
+  async function handleAudioChange(playPath, audioIndex, resumePosition) {
+    const playData = await fetchPlayUrlWithAudio(playPath, audioIndex)
+    setPlayer((prev) => ({
+      ...prev,
+      url: playData.url,
+      tracks: playData.tracks || prev?.tracks,
+      durationHint: playData.duration_seconds || prev?.durationHint,
+      resumeAt: resumePosition,
+    }))
+  }
+
   return (
     <div className="app-shell">
       <Navbar active="series" />
       <main className="page-content page-content--padded">
         <Link to="/series" className="back-link">← Volver a series</Link>
+        <ContinueWatchingRow type="series" onPlay={setPlayer} />
         {error ? <div className="page-error">{error}</div> : null}
         {info?.info ? (
           <section className="series-hero">
@@ -103,7 +120,10 @@ export default function SeriesDetail() {
           url={player.url}
           type={player.type}
           meta={player.meta}
+          durationHint={player.durationHint || 0}
+          tracks={player.tracks}
           resumeAt={player.resumeAt || 0}
+          onUrlChange={handleAudioChange}
           onClose={() => setPlayer(null)}
         />
       ) : null}

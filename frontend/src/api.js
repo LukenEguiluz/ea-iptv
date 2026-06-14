@@ -102,6 +102,11 @@ export async function fetchPlayUrl(path) {
   return response.json()
 }
 
+export async function fetchPlayUrlWithAudio(basePath, audioIndex) {
+  const separator = basePath.includes('?') ? '&' : '?'
+  return fetchPlayUrl(`${basePath}${separator}audio=${audioIndex}`)
+}
+
 export async function heartbeat() {
   await apiFetch('/session/heartbeat', { method: 'POST', body: '{}' })
 }
@@ -136,8 +141,10 @@ export async function fetchSearchStatus() {
   return response.json()
 }
 
-export async function fetchContinueWatching(limit = 12) {
-  const response = await apiFetch(`/library/continue?limit=${limit}`)
+export async function fetchContinueWatching(limit = 12, type = '') {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (type) params.set('type', type)
+  const response = await apiFetch(`/library/continue?${params}`)
   if (!response.ok) return []
   return response.json()
 }
@@ -232,14 +239,17 @@ export async function buildPlayerSession(item, options = {}) {
     title,
     url: playData.url,
     type: 'vod',
+    durationHint: playData.duration_seconds || progress?.duration_seconds || 0,
+    tracks: playData.tracks || null,
     resumeAt: progress?.position_seconds || 0,
     meta: {
       contentType: 'vod',
       itemId,
       title,
       image,
-      ext,
+      ext: playData.ext || ext,
       categoryName,
+      playPath: `/catalog/vod/${itemId}/play?ext=${ext}`,
     },
   }
 }

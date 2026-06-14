@@ -13,6 +13,7 @@ from .catalog_utils import (
     load_media_token,
     load_play_token,
     load_segment_token,
+    load_subtitle_token,
     rewrite_m3u8,
 )
 from .xtream import (
@@ -32,9 +33,12 @@ PROVIDER_USER_AGENT = (
 )
 from .stream_utils import (
     analyze_stream,
+    cache_path,
+    ffmpeg_browser_mp4_stream,
     ffmpeg_live_h264_stream,
+    ffmpeg_subtitle_vtt_stream,
     file_range_response,
-    get_or_create_browser_mp4,
+    warm_browser_mp4_cache,
     live_needs_transcode,
 )
 
@@ -48,22 +52,28 @@ def _serve_browser_compatible(
     kind: str,
     stream_id: str | int,
     ext: str,
+    audio_stream_index: int | None = None,
 ):
     if not shutil.which('ffmpeg') or not shutil.which('ffprobe'):
         return None
     try:
+        audio_key = audio_stream_index if audio_stream_index is not None else 0
+        cached = cache_path(kind, stream_id, ext, audio_key)
+        if cached.exists() and cached.stat().st_size > 0:
+            response = file_range_response(cached, request, content_type='video/mp4')
+            response['X-Accel-Buffering'] = 'no'
+            return response
+
         analysis = analyze_stream(upstream_url, ext, PROVIDER_USER_AGENT)
         if not analysis['needs_processing']:
             return None
-        cached = get_or_create_browser_mp4(
-            upstream_url,
-            kind,
-            stream_id,
-            ext,
-            PROVIDER_USER_AGENT,
+
+        warm_browser_mp4_cache(
+            upstream_url, kind, stream_id, ext, PROVIDER_USER_AGENT, audio_stream_index,
         )
-        response = file_range_response(cached, request, content_type='video/mp4')
-        response['X-Accel-Buffering'] = 'no'
+        response = ffmpeg_browser_mp4_stream(
+            upstream_url, analysis, PROVIDER_USER_AGENT, audio_stream_index,
+        )
         return response
     except (OSError, RuntimeError, ValueError):
         return None
@@ -193,6 +203,29 @@ class MediaProxyView(APIView):
         return response
 
 
+class SubtitleProxyView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        token = _read_token(request)
+        try:
+            payload = load_subtitle_token(token)
+        except signing.BadSignature:
+            return Response({'detail': 'Enlace de subtítulos inválido.'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            user = User.objects.get(pk=payload['uid'])
+            upstream_url = _resolve_play_upstream(user, payload)
+            sub_index = int(payload['sub'])
+            return ffmpeg_subtitle_vtt_stream(upstream_url, sub_index, PROVIDER_USER_AGENT)
+        except User.DoesNotExist:
+            return Response({'detail': 'Usuario no encontrado.'}, status=status.HTTP_403_FORBIDDEN)
+        except XtreamError as exc:
+            return Response({'detail': exc.message, 'code': exc.code}, status=status.HTTP_502_BAD_GATEWAY)
+        except (OSError, RuntimeError, ValueError):
+            return HttpResponse(status=404)
+
+
 class StreamPlayProxyView(APIView):
     permission_classes = [AllowAny]
 
@@ -207,6 +240,9 @@ class StreamPlayProxyView(APIView):
             user = User.objects.get(pk=payload['uid'])
             stream_kind = payload.get('kind', '')
             stream_ext = (payload.get('ext') or '').lower().lstrip('.')
+            audio_stream_index = payload.get('audio')
+            if audio_stream_index is not None:
+                audio_stream_index = int(audio_stream_index)
             upstream_url = _resolve_play_upstream(user, payload)
             if stream_kind == 'live' and shutil.which('ffmpeg') and live_needs_transcode(
                 upstream_url,
@@ -220,6 +256,7 @@ class StreamPlayProxyView(APIView):
                     kind=stream_kind,
                     stream_id=payload['id'],
                     ext=stream_ext or 'mp4',
+                    audio_stream_index=audio_stream_index,
                 )
                 if processed is not None:
                     return processed

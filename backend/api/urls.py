@@ -21,7 +21,7 @@ from .library_views import (
     ViewHistoryUpsertView,
     WatchProgressDetailView,
 )
-from .proxy_views import MediaProxyView, StreamPlayProxyView, StreamSegmentProxyView
+from .proxy_views import MediaProxyView, StreamPlayProxyView, StreamSegmentProxyView, SubtitleProxyView
 from .search_views import CatalogSearchStatusView, CatalogSearchSyncView, CatalogSearchView
 from .views import (
     SessionCurrentView,
@@ -59,5 +59,6 @@ urlpatterns = [
     path('diagnostics/config', DiagnosticsConfigView.as_view(), name='diagnostics_config'),
     path('proxy/media', MediaProxyView.as_view(), name='proxy_media'),
     path('proxy/play', StreamPlayProxyView.as_view(), name='proxy_play'),
+    path('proxy/subtitle', SubtitleProxyView.as_view(), name='proxy_subtitle'),
     path('proxy/segment', StreamSegmentProxyView.as_view(), name='proxy_segment'),
 ]

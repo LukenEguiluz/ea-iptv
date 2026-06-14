@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { buildPlayerSession, fetchCatalog } from '../api'
+import { buildPlayerSession, fetchCatalog, fetchPlayUrlWithAudio } from '../api'
+import ContinueWatchingRow from '../components/ContinueWatchingRow'
 import LoadingState from '../components/LoadingState'
 import MediaCard from '../components/MediaCard'
 import Navbar from '../components/Navbar'
@@ -59,11 +60,23 @@ export default function Movies() {
     }
   }
 
+  async function handleAudioChange(playPath, audioIndex, resumePosition) {
+    const playData = await fetchPlayUrlWithAudio(playPath, audioIndex)
+    setPlayer((prev) => ({
+      ...prev,
+      url: playData.url,
+      tracks: playData.tracks || prev?.tracks,
+      durationHint: playData.duration_seconds || prev?.durationHint,
+      resumeAt: resumePosition,
+    }))
+  }
+
   return (
     <div className="app-shell">
       <Navbar active="movies" />
       <main className="page-content page-content--padded">
         <h1 className="page-title">Películas</h1>
+        <ContinueWatchingRow type="vod" onPlay={setPlayer} />
         <SearchBar
           type="vod"
           placeholder="Buscar por título, actor o director…"
@@ -106,7 +119,10 @@ export default function Movies() {
           url={player.url}
           type={player.type}
           meta={player.meta}
+          durationHint={player.durationHint || 0}
+          tracks={player.tracks}
           resumeAt={player.resumeAt || 0}
+          onUrlChange={handleAudioChange}
           onClose={() => setPlayer(null)}
         />
       ) : null}

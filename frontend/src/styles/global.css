@@ -773,10 +773,88 @@ input {
   font-variant-numeric: tabular-nums;
 }
 
-.player-seek {
+.player-seek-wrap {
   flex: 1;
-  accent-color: #ff3b57;
-  height: 4px;
+  position: relative;
+  height: 1.4rem;
+  display: flex;
+  align-items: center;
+}
+
+.player-seek-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.player-seek-buffered {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.38);
+  border-radius: inherit;
+  transition: width 0.25s ease;
+}
+
+.player-seek-played {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background: #ff3b57;
+  border-radius: inherit;
+  z-index: 1;
+  transition: width 0.1s linear;
+}
+
+.player-seek {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  width: 100%;
+  margin: 0;
+  height: 1.4rem;
+  background: transparent;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.player-seek::-webkit-slider-runnable-track {
+  height: 5px;
+  background: transparent;
+}
+
+.player-seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #ff3b57;
+  margin-top: -4px;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.25);
+}
+
+.player-seek::-moz-range-track {
+  height: 5px;
+  background: transparent;
+  border: none;
+}
+
+.player-seek::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #ff3b57;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.25);
 }
 
 .player-seek:disabled {
@@ -959,6 +1037,38 @@ input {
 }
 
 .player-epg-next li span:first-child {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.player-track-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.player-track-select select {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.75rem;
+  max-width: 7rem;
+}
+
+.library-row--top {
+  margin-bottom: 1rem;
+}
+
+.page-content--padded-top {
+  padding: 1rem 1.5rem 0;
+}
+
+.resume-card-percent {
+  display: block;
+  font-size: 0.75rem;
   color: rgba(255, 255, 255, 0.55);
 }
 

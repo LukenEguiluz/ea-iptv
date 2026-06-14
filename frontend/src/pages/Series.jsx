@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchCatalog } from '../api'
+import { fetchCatalog, fetchPlayUrlWithAudio } from '../api'
+import ContinueWatchingRow from '../components/ContinueWatchingRow'
 import LoadingState from '../components/LoadingState'
 import MediaCard from '../components/MediaCard'
 import Navbar from '../components/Navbar'
+import Player from '../components/Player'
 import SearchBar from '../components/SearchBar'
 
 function seriesPath(categoryId) {
@@ -18,6 +20,7 @@ export default function Series() {
   const [loadingCats, setLoadingCats] = useState(true)
   const [loadingSeries, setLoadingSeries] = useState(false)
   const [error, setError] = useState('')
+  const [player, setPlayer] = useState(null)
 
   useEffect(() => {
     fetchCatalog('/catalog/series/categories')
@@ -43,11 +46,23 @@ export default function Series() {
       .finally(() => setLoadingSeries(false))
   }, [activeCategory])
 
+  async function handleAudioChange(playPath, audioIndex, resumePosition) {
+    const playData = await fetchPlayUrlWithAudio(playPath, audioIndex)
+    setPlayer((prev) => ({
+      ...prev,
+      url: playData.url,
+      tracks: playData.tracks || prev?.tracks,
+      durationHint: playData.duration_seconds || prev?.durationHint,
+      resumeAt: resumePosition,
+    }))
+  }
+
   return (
     <div className="app-shell">
       <Navbar active="series" />
       <main className="page-content page-content--padded">
         <h1 className="page-title">Series</h1>
+        <ContinueWatchingRow type="series" onPlay={setPlayer} />
         <SearchBar
           type="series"
           placeholder="Buscar por título, actor o director…"
@@ -84,6 +99,19 @@ export default function Series() {
           </div>
         )}
       </main>
+      {player ? (
+        <Player
+          title={player.title}
+          url={player.url}
+          type={player.type}
+          meta={player.meta}
+          durationHint={player.durationHint || 0}
+          tracks={player.tracks}
+          resumeAt={player.resumeAt || 0}
+          onUrlChange={handleAudioChange}
+          onClose={() => setPlayer(null)}
+        />
+      ) : null}
     </div>
   )
 }

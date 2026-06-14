@@ -8,6 +8,7 @@ IMAGE_FIELDS = ('stream_icon', 'cover', 'cover_big')
 PLAY_SALT = 'iptv-play'
 SEGMENT_SALT = 'iptv-segment'
 MEDIA_SALT = 'iptv-media'
+SUBTITLE_SALT = 'iptv-subtitle'
 PLAY_MAX_AGE = 60 * 60 * 6
 MEDIA_MAX_AGE = 60 * 60 * 24
 
@@ -23,11 +24,45 @@ def _token_query(token: str) -> str:
     return f't={quote(token, safe="")}'
 
 
-def make_play_token(user_id: int, kind: str, stream_id: str | int, ext: str = '') -> str:
+def make_play_token(
+    user_id: int,
+    kind: str,
+    stream_id: str | int,
+    ext: str = '',
+    audio_index: int | None = None,
+) -> str:
+    payload = {
+        'uid': user_id,
+        'kind': kind,
+        'id': str(stream_id),
+        'ext': ext.lstrip('.'),
+    }
+    if audio_index is not None:
+        payload['audio'] = int(audio_index)
+    return signing.dumps(payload, salt=PLAY_SALT)
+
+
+def make_subtitle_token(
+    user_id: int,
+    kind: str,
+    stream_id: str | int,
+    ext: str,
+    sub_index: int,
+) -> str:
     return signing.dumps(
-        {'uid': user_id, 'kind': kind, 'id': str(stream_id), 'ext': ext.lstrip('.')},
-        salt=PLAY_SALT,
+        {
+            'uid': user_id,
+            'kind': kind,
+            'id': str(stream_id),
+            'ext': ext.lstrip('.'),
+            'sub': int(sub_index),
+        },
+        salt=SUBTITLE_SALT,
     )
+
+
+def load_subtitle_token(token: str) -> dict:
+    return signing.loads(token, salt=SUBTITLE_SALT, max_age=PLAY_MAX_AGE)
 
 
 def load_play_token(token: str) -> dict:
@@ -50,9 +85,28 @@ def load_media_token(token: str) -> dict:
     return signing.loads(token, salt=MEDIA_SALT, max_age=MEDIA_MAX_AGE)
 
 
-def proxy_play_url(request, user, kind: str, stream_id: str | int, ext: str = '') -> str:
-    token = make_play_token(user.pk, kind, stream_id, ext)
+def proxy_play_url(
+    request,
+    user,
+    kind: str,
+    stream_id: str | int,
+    ext: str = '',
+    audio_index: int | None = None,
+) -> str:
+    token = make_play_token(user.pk, kind, stream_id, ext, audio_index=audio_index)
     return f'/api/proxy/play?{_token_query(token)}'
+
+
+def proxy_subtitle_url(
+    request,
+    user,
+    kind: str,
+    stream_id: str | int,
+    ext: str,
+    sub_index: int,
+) -> str:
+    token = make_subtitle_token(user.pk, kind, stream_id, ext, sub_index)
+    return f'/api/proxy/subtitle?{_token_query(token)}'
 
 
 def proxy_media_url(request, original_url: str) -> str:

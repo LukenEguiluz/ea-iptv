@@ -8,16 +8,69 @@ from sessions.services import SessionError
 from .epg_utils import normalize_epg_list
 from .catalog_utils import (
     proxy_play_url,
+    proxy_subtitle_url,
     rewrite_catalog_list,
     rewrite_series_info,
 )
+from .stream_utils import get_media_playback_info
 from .xtream import (
     XtreamError,
     get_credentials,
     limit_results,
+    series_stream_url,
+    vod_stream_url,
     xtream_request,
 )
 from .proxy_views import resolve_series_extension
+
+
+def _parse_audio_index(request) -> int | None:
+    raw = request.query_params.get('audio', '').strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _play_payload(request, user, *, kind: str, stream_id: str | int, ext: str, ip: str | None):
+    username, password = get_credentials(user, ip_address=ip)
+    if kind == 'vod':
+        upstream_url = vod_stream_url(username, password, stream_id, ext=ext)
+    else:
+        upstream_url = series_stream_url(username, password, stream_id, ext=ext)
+
+    audio_index = _parse_audio_index(request)
+    media_info = get_media_playback_info(upstream_url, PROVIDER_USER_AGENT)
+
+    subtitles = []
+    for track in media_info.get('subtitles', []):
+        subtitles.append({
+            **track,
+            'url': proxy_subtitle_url(
+                request, user, kind, stream_id, ext, track['index'],
+            ),
+        })
+
+    return {
+        'type': kind,
+        'stream_id': stream_id,
+        'ext': ext,
+        'url': proxy_play_url(request, user, kind, stream_id, ext=ext, audio_index=audio_index),
+        'duration_seconds': media_info.get('duration_seconds'),
+        'tracks': {
+            'audio': media_info.get('audio', []),
+            'subtitles': subtitles,
+        },
+    }
+
+
+# Provider user-agent shared with proxy
+PROVIDER_USER_AGENT = (
+    'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 '
+    '(KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3'
+)
 
 
 def _client_ip(request) -> str | None:
@@ -164,11 +217,14 @@ class LiveEpgView(CatalogBaseView):
 class VodStreamUrlView(CatalogBaseView):
     def get(self, request, vod_id):
         ext = request.query_params.get('ext', 'mp4')
-        return Response({
-            'type': 'vod',
-            'stream_id': vod_id,
-            'url': proxy_play_url(request, request.user, 'vod', vod_id, ext=ext),
-        })
+        return Response(_play_payload(
+            request,
+            request.user,
+            kind='vod',
+            stream_id=vod_id,
+            ext=ext,
+            ip=_client_ip(request),
+        ))
 
 
 class SeriesEpisodeStreamUrlView(CatalogBaseView):
@@ -181,9 +237,11 @@ class SeriesEpisodeStreamUrlView(CatalogBaseView):
                 {'detail': 'Episodio no disponible en el proveedor.', 'code': 'episode_unavailable'},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
-        return Response({
-            'type': 'series',
-            'stream_id': episode_id,
-            'ext': ext,
-            'url': proxy_play_url(request, request.user, 'series', episode_id, ext=ext),
-        })
+        return Response(_play_payload(
+            request,
+            request.user,
+            kind='series',
+            stream_id=episode_id,
+            ext=ext,
+            ip=_client_ip(request),
+        ))

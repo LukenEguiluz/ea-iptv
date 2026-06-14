@@ -26,18 +26,22 @@ class ContinueWatchingView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        content_type = request.query_params.get('type', '').strip().lower()
         limit = request.query_params.get('limit', '12')
         try:
             limit_value = max(1, min(int(limit), 30))
         except (TypeError, ValueError):
             limit_value = 12
 
-        items = WatchProgress.objects.filter(
+        qs = WatchProgress.objects.filter(
             user=request.user,
             completed=False,
             content_type__in=['vod', 'series'],
             position_seconds__gt=15,
-        ).order_by('-updated_at')[:limit_value]
+        )
+        if content_type in {'vod', 'series'}:
+            qs = qs.filter(content_type=content_type)
+        items = qs.order_by('-updated_at')[:limit_value]
 
         return Response([_progress_to_item(item) for item in items])
 
