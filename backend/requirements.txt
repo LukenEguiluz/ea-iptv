@@ -1,0 +1,8 @@
+Django>=5.0,<6
+djangorestframework>=3.15
+djangorestframework-simplejwt>=5.3
+psycopg2-binary>=2.9
+gunicorn>=22.0
+cryptography>=42.0
+django-cors-headers>=4.3
+requests>=2.32

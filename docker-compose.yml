@@ -1,0 +1,80 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: iptv_gateway
+      POSTGRES_USER: iptv_gateway
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-iptv_gateway_secret}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iptv_gateway -d iptv_gateway"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: iptv_gateway
+      POSTGRES_USER: iptv_gateway
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-iptv_gateway_secret}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-change-in-production}
+      DEBUG: ${DEBUG:-True}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      IPTV_ENCRYPTION_KEY: ${IPTV_ENCRYPTION_KEY:-}
+      SESSION_INACTIVITY_MINUTES: ${SESSION_INACTIVITY_MINUTES:-5}
+      XTREAM_SERVER_URL: ${XTREAM_SERVER_URL:-}
+      IPTV_ACCOUNT_LUKEN_USERNAME: ${IPTV_ACCOUNT_LUKEN_USERNAME:-}
+      IPTV_ACCOUNT_LUKEN_PASSWORD: ${IPTV_ACCOUNT_LUKEN_PASSWORD:-}
+      IPTV_ACCOUNT_REBE_USERNAME: ${IPTV_ACCOUNT_REBE_USERNAME:-}
+      IPTV_ACCOUNT_REBE_PASSWORD: ${IPTV_ACCOUNT_REBE_PASSWORD:-}
+      IPTV_ACCOUNT_HELIOS_USERNAME: ${IPTV_ACCOUNT_HELIOS_USERNAME:-}
+      IPTV_ACCOUNT_HELIOS_PASSWORD: ${IPTV_ACCOUNT_HELIOS_PASSWORD:-}
+      IPTV_ACCOUNT_CARMEN_USERNAME: ${IPTV_ACCOUNT_CARMEN_USERNAME:-}
+      IPTV_ACCOUNT_CARMEN_PASSWORD: ${IPTV_ACCOUNT_CARMEN_PASSWORD:-}
+      IPTV_ACCOUNT_ARTURO_USERNAME: ${IPTV_ACCOUNT_ARTURO_USERNAME:-}
+      IPTV_ACCOUNT_ARTURO_PASSWORD: ${IPTV_ACCOUNT_ARTURO_PASSWORD:-}
+      IPTV_USER_LUKEN_PASSWORD: ${IPTV_USER_LUKEN_PASSWORD:-}
+      IPTV_USER_REBE_PASSWORD: ${IPTV_USER_REBE_PASSWORD:-}
+      IPTV_USER_HELIOS_PASSWORD: ${IPTV_USER_HELIOS_PASSWORD:-}
+      IPTV_USER_CARMEN_PASSWORD: ${IPTV_USER_CARMEN_PASSWORD:-}
+      IPTV_USER_ARTURO_PASSWORD: ${IPTV_USER_ARTURO_PASSWORD:-}
+      DJANGO_SUPERUSER_USERNAME: ${DJANGO_SUPERUSER_USERNAME:-}
+      DJANGO_SUPERUSER_EMAIL: ${DJANGO_SUPERUSER_EMAIL:-}
+      DJANGO_SUPERUSER_PASSWORD: ${DJANGO_SUPERUSER_PASSWORD:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "8000"
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+      - frontend
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    expose:
+      - "80"
+
+volumes:
+  postgres_data:
