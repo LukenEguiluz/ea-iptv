@@ -13,6 +13,8 @@ CACHE_DIR = Path(os.environ.get('IPTV_TRANSCODE_CACHE', '/tmp/iptv-transcode-cac
 BROWSER_AUDIO_CODECS = {'aac', 'mp3', 'opus', 'vorbis', 'flac'}
 NON_BROWSER_AUDIO_CODECS = {'ac3', 'eac3', 'dts', 'truehd', 'dts_hd', 'pcm_s16le', 'pcm_s24le'}
 BROWSER_CONTAINERS = {'mp4', 'mov', 'm4v'}
+BROWSER_VIDEO_CODECS = {'h264', 'avc1', 'mpeg4', 'mp4v'}
+NON_BROWSER_VIDEO_CODECS = {'hevc', 'h265', 'hev1', 'hvc1', 'vp9', 'av1', 'mpeg2video', 'wmv3', 'vc1'}
 TEXT_SUBTITLE_CODECS = {'subrip', 'ass', 'ssa', 'webvtt', 'mov_text'}
 _media_info_cache: dict[str, tuple[float, dict]] = {}
 _locks: dict[str, threading.Lock] = {}
@@ -268,6 +270,60 @@ def ffmpeg_live_h264_stream(upstream_url: str, user_agent: str) -> StreamingHttp
     return response
 
 
+def _video_codec_ok(video_codec: str) -> bool:
+    codec = (video_codec or '').lower()
+    if not codec:
+        return False
+    if codec.startswith('h264') or codec in BROWSER_VIDEO_CODECS:
+        return True
+    return codec not in NON_BROWSER_VIDEO_CODECS
+
+
+def _append_transcode_output(
+    cmd: list,
+    analysis: dict,
+    *,
+    audio_stream_index: int | None = None,
+    faststart: bool = False,
+    fragmented: bool = False,
+    output: str | None = None,
+) -> None:
+    has_audio = analysis.get('has_audio', bool(analysis.get('audio_codec')))
+    video_ok = analysis.get('video_ok', _video_codec_ok(analysis.get('video_codec', '')))
+
+    if has_audio:
+        if audio_stream_index is not None:
+            cmd.extend(['-map', f'0:{audio_stream_index}?'])
+        else:
+            cmd.extend(['-map', '0:a:0?'])
+
+    if video_ok:
+        cmd.extend(['-c:v', 'copy'])
+    else:
+        cmd.extend([
+            '-c:v', 'libx264',
+            '-preset', 'veryfast',
+            '-profile:v', 'main',
+            '-level', '4.0',
+            '-pix_fmt', 'yuv420p',
+        ])
+
+    if not has_audio:
+        cmd.append('-an')
+    elif analysis.get('audio_ok'):
+        cmd.extend(['-c:a', 'copy'])
+    else:
+        cmd.extend(['-c:a', 'aac', '-b:a', '192k', '-ac', '2'])
+
+    if output is not None:
+        if fragmented:
+            cmd.extend(['-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov+default_base_moof', output])
+        elif faststart:
+            cmd.extend(['-movflags', '+faststart', output])
+        else:
+            cmd.extend(['-f', 'mp4', output])
+
+
 def analyze_stream(upstream_url: str, ext: str, user_agent: str) -> dict:
     streams = probe_streams(upstream_url, user_agent)
     audio = _first_stream(streams, 'audio')
@@ -276,21 +332,27 @@ def analyze_stream(upstream_url: str, ext: str, user_agent: str) -> dict:
     video_codec = (video or {}).get('codec_name', '').lower()
     container = ext.lower().lstrip('.')
     audio_channels = int((audio or {}).get('channels') or 0)
+    has_audio = bool(audio_codec)
     audio_ok = (
-        bool(audio_codec)
-        and audio_codec in BROWSER_AUDIO_CODECS
-        and audio_codec not in NON_BROWSER_AUDIO_CODECS
-        and audio_channels in (0, 1, 2)
+        not has_audio
+        or (
+            audio_codec in BROWSER_AUDIO_CODECS
+            and audio_codec not in NON_BROWSER_AUDIO_CODECS
+            and audio_channels in (0, 1, 2)
+        )
     )
+    video_ok = _video_codec_ok(video_codec)
     container_ok = container in BROWSER_CONTAINERS
-    needs_processing = not container_ok or not audio_ok
+    needs_processing = not container_ok or not video_ok or (has_audio and not audio_ok)
     return {
         'streams': streams,
         'audio_codec': audio_codec,
         'video_codec': video_codec,
         'container': container,
         'audio_channels': audio_channels,
+        'has_audio': has_audio,
         'audio_ok': audio_ok,
+        'video_ok': video_ok,
         'container_ok': container_ok,
         'needs_processing': needs_processing,
     }
@@ -315,8 +377,6 @@ def ensure_browser_mp4(
     if partial.exists():
         partial.unlink(missing_ok=True)
 
-    audio_codec = analysis.get('audio_codec', '')
-    copy_audio = analysis.get('audio_ok', False)
     cmd = [
         'ffmpeg',
         '-hide_banner',
@@ -325,16 +385,13 @@ def ensure_browser_mp4(
         '-i', upstream_url,
         '-map', '0:v:0',
     ]
-    if audio_stream_index is not None:
-        cmd.extend(['-map', f'0:{audio_stream_index}?'])
-    else:
-        cmd.extend(['-map', '0:a:0?'])
-    cmd.extend(['-c:v', 'copy'])
-    if copy_audio:
-        cmd.extend(['-c:a', 'copy'])
-    else:
-        cmd.extend(['-c:a', 'aac', '-b:a', '192k', '-ac', '2'])
-    cmd.extend(['-movflags', '+faststart', str(partial)])
+    _append_transcode_output(
+        cmd,
+        analysis,
+        audio_stream_index=audio_stream_index,
+        faststart=True,
+        output=str(partial),
+    )
 
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=60 * 60, check=False)
     if result.returncode != 0 or not partial.exists() or partial.stat().st_size == 0:
@@ -376,7 +433,6 @@ def _ffmpeg_transcode_cmd(
     output: str,
     audio_stream_index: int | None = None,
 ) -> list[str]:
-    copy_audio = analysis.get('audio_ok', False)
     cmd = [
         'ffmpeg',
         '-hide_banner',
@@ -385,16 +441,13 @@ def _ffmpeg_transcode_cmd(
         '-i', upstream_url,
         '-map', '0:v:0',
     ]
-    if audio_stream_index is not None:
-        cmd.extend(['-map', f'0:{audio_stream_index}?'])
-    else:
-        cmd.extend(['-map', '0:a:0?'])
-    cmd.extend(['-c:v', 'copy'])
-    if copy_audio:
-        cmd.extend(['-c:a', 'copy'])
-    else:
-        cmd.extend(['-c:a', 'aac', '-b:a', '192k', '-ac', '2'])
-    cmd.extend(['-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov+default_base_moof', output])
+    _append_transcode_output(
+        cmd,
+        analysis,
+        audio_stream_index=audio_stream_index,
+        fragmented=True,
+        output=output,
+    )
     return cmd
 
 

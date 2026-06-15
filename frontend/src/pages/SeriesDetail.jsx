@@ -3,19 +3,18 @@ import { Link, useParams } from 'react-router-dom'
 import {
   fetchCatalog,
   fetchPlayUrl,
-  fetchPlayUrlWithAudio,
   fetchWatchProgress,
   recordViewHistory,
 } from '../api'
 import ContinueWatchingRow from '../components/ContinueWatchingRow'
 import Navbar from '../components/Navbar'
-import Player from '../components/Player'
+import { usePlayback } from '../context/PlaybackContext'
 
 export default function SeriesDetail() {
   const { seriesId } = useParams()
+  const { setPlayer } = usePlayback()
   const [info, setInfo] = useState(null)
   const [error, setError] = useState('')
-  const [player, setPlayer] = useState(null)
 
   useEffect(() => {
     async function load() {
@@ -65,17 +64,6 @@ export default function SeriesDetail() {
 
   const seasons = info?.episodes ? Object.entries(info.episodes) : []
 
-  async function handleAudioChange(playPath, audioIndex, resumePosition) {
-    const playData = await fetchPlayUrlWithAudio(playPath, audioIndex)
-    setPlayer((prev) => ({
-      ...prev,
-      url: playData.url,
-      tracks: playData.tracks || prev?.tracks,
-      durationHint: playData.duration_seconds || prev?.durationHint,
-      resumeAt: resumePosition,
-    }))
-  }
-
   return (
     <div className="app-shell">
       <Navbar active="series" />
@@ -114,19 +102,6 @@ export default function SeriesDetail() {
           </section>
         ))}
       </main>
-      {player ? (
-        <Player
-          title={player.title}
-          url={player.url}
-          type={player.type}
-          meta={player.meta}
-          durationHint={player.durationHint || 0}
-          tracks={player.tracks}
-          resumeAt={player.resumeAt || 0}
-          onUrlChange={handleAudioChange}
-          onClose={() => setPlayer(null)}
-        />
-      ) : null}
     </div>
   )
 }

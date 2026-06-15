@@ -28,6 +28,24 @@ const LIVE_STATUS_LABELS = {
   stalled: 'Transmisión detenida',
 }
 
+const READY_STATE_PERCENT = [8, 28, 52, 78, 100]
+
+function isIosDevice() {
+  return /iPad|iPhone|iPod/i.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+}
+
+function getFullscreenElement() {
+  return document.fullscreenElement
+    || document.webkitFullscreenElement
+    || document.mozFullScreenElement
+    || null
+}
+
+function isVideoNativeFullscreen(video) {
+  return Boolean(video?.webkitDisplayingFullscreen)
+}
+
 export default function Player({
   title,
   url,
@@ -45,6 +63,8 @@ export default function Player({
   onClose,
 }) {
   const videoRef = useRef(null)
+  const overlayRef = useRef(null)
+  const loadStartedRef = useRef(Date.now())
   const lastProgressRef = useRef(0)
   const stallTicksRef = useRef(0)
   const lastSavedRef = useRef(0)
@@ -65,6 +85,11 @@ export default function Player({
   const [switching, setSwitching] = useState(false)
   const [selectedAudio, setSelectedAudio] = useState('')
   const [selectedSubtitle, setSelectedSubtitle] = useState('-1')
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [loadPhase, setLoadPhase] = useState('idle')
+  const [prepPercent, setPrepPercent] = useState(0)
+  const [bufferPercent, setBufferPercent] = useState(0)
+  const [isWaiting, setIsWaiting] = useState(false)
   const isLive = type === 'live'
   const isVodLike = type === 'vod' || type === 'series'
   const audioTracks = tracks?.audio || []
@@ -147,6 +172,73 @@ export default function Player({
   }, [showGuide, currentChannelId, currentChannelIndex])
 
   useEffect(() => {
+    function syncFullscreen() {
+      const video = videoRef.current
+      setIsFullscreen(Boolean(getFullscreenElement()) || isVideoNativeFullscreen(video))
+    }
+
+    document.addEventListener('fullscreenchange', syncFullscreen)
+    document.addEventListener('webkitfullscreenchange', syncFullscreen)
+    const video = videoRef.current
+    video?.addEventListener('webkitbeginfullscreen', syncFullscreen)
+    video?.addEventListener('webkitendfullscreen', syncFullscreen)
+
+    return () => {
+      document.removeEventListener('fullscreenchange', syncFullscreen)
+      document.removeEventListener('webkitfullscreenchange', syncFullscreen)
+      video?.removeEventListener('webkitbeginfullscreen', syncFullscreen)
+      video?.removeEventListener('webkitendfullscreen', syncFullscreen)
+    }
+  }, [url])
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || !url) return undefined
+
+    const playbackUrl = url.startsWith('/')
+      ? `${window.location.origin}${url}`
+      : url
+    const needsConversion = isVodLike && playbackUrl.includes('/api/proxy/play')
+
+    loadStartedRef.current = Date.now()
+    setLoadPhase(needsConversion ? 'converting' : 'loading')
+    setPrepPercent(0)
+    setBufferPercent(0)
+    setIsWaiting(false)
+
+    const progressTimer = window.setInterval(() => {
+      const elapsed = Date.now() - loadStartedRef.current
+      const statePercent = READY_STATE_PERCENT[video.readyState] || 5
+      const timeCap = needsConversion ? 120000 : 45000
+      const timePercent = Math.min(92, Math.floor((elapsed / timeCap) * 92))
+      const next = Math.max(statePercent, timePercent)
+      setPrepPercent((prev) => (video.readyState >= 3 ? 100 : Math.max(prev, next)))
+
+      if (video.readyState >= 3) {
+        setLoadPhase('ready')
+      } else if (needsConversion) {
+        setLoadPhase('converting')
+      } else if (isLive) {
+        setLoadPhase('connecting')
+      } else {
+        setLoadPhase('loading')
+      }
+
+      if (!isLive && video.buffered.length > 0) {
+        const end = video.buffered.end(video.buffered.length - 1)
+        const total = (video.duration > 0 && Number.isFinite(video.duration))
+          ? video.duration
+          : (durationHint || 0)
+        if (total > 0) {
+          setBufferPercent(Math.min(100, Math.round((end / total) * 100)))
+        }
+      }
+    }, 350)
+
+    return () => window.clearInterval(progressTimer)
+  }, [url, isVodLike, isLive, durationHint])
+
+  useEffect(() => {
     const video = videoRef.current
     if (!video || !url) return undefined
 
@@ -159,7 +251,11 @@ export default function Player({
     setCurrent(0)
     setDuration(0)
     setBuffered(0)
-    setLiveStatus(isLive ? 'connecting' : 'live')
+    setPrepPercent(0)
+    setBufferPercent(0)
+    setIsWaiting(false)
+    setLoadPhase(isLive ? 'connecting' : (url.includes('/api/proxy/play') ? 'converting' : 'loading'))
+    if (isLive) setLiveStatus('connecting')
     lastProgressRef.current = 0
     stallTicksRef.current = 0
     if (isLive) {
@@ -236,32 +332,54 @@ export default function Player({
       video.volume = 1
       video.play().catch(() => {})
     } else {
+      video.setAttribute('playsinline', '')
+      video.setAttribute('webkit-playsinline', 'true')
+      video.preload = 'auto'
       video.src = playbackUrl
       video.volume = 1
       video.muted = false
+      video.load()
       video.play().catch(() => {})
     }
 
     const onPlay = () => {
       setPlaying(true)
+      setIsWaiting(false)
+      setPrepPercent(100)
+      setLoadPhase('playing')
       if (isLive) setLiveStatus('live')
     }
     const onPause = () => setPlaying(false)
     const onWaiting = () => {
+      setIsWaiting(true)
       if (isLive) setLiveStatus('buffering')
     }
     const onPlaying = () => {
+      setIsWaiting(false)
+      setPrepPercent(100)
+      setLoadPhase('playing')
       if (isLive) {
         setLiveStatus('live')
         stallTicksRef.current = 0
       }
+    }
+    const onCanPlay = () => {
+      setPrepPercent(100)
+      setLoadPhase('ready')
     }
     const onTime = () => {
       if (isLive) return
       const position = video.currentTime || 0
       setCurrent(position)
       if (video.buffered.length) {
-        setBuffered(video.buffered.end(video.buffered.length - 1))
+        const end = video.buffered.end(video.buffered.length - 1)
+        setBuffered(end)
+        const total = (video.duration > 0 && Number.isFinite(video.duration))
+          ? video.duration
+          : (durationHint || 0)
+        if (total > 0) {
+          setBufferPercent(Math.min(100, Math.round((end / total) * 100)))
+        }
       }
       if (meta?.itemId && isVodLike) {
         const now = Date.now()
@@ -298,11 +416,21 @@ export default function Player({
       setVolume(video.volume)
       setMuted(video.muted)
     }
-    const onMediaError = () => setError(
-      type === 'series' || type === 'vod'
-        ? 'Error de reproducción. Si no hay audio, el formato puede no ser compatible con el navegador.'
-        : 'No se pudo reproducir el video.',
-    )
+    const onMediaError = () => {
+      const mediaError = video.error
+      const code = mediaError?.code
+      let message = 'No se pudo reproducir el video.'
+      if (type === 'series' || type === 'vod') {
+        if (code === 4) {
+          message = 'Formato no compatible con este dispositivo. El servidor intentará convertir el video automáticamente; vuelve a intentar en unos segundos.'
+        } else if (!audioTracks.length) {
+          message = 'Reproducción solo video (sin audio). Si falla, el formato de video puede no ser compatible con tu celular.'
+        } else {
+          message = 'Error de reproducción. El video se está preparando para tu dispositivo; intenta de nuevo.'
+        }
+      }
+      setError(message)
+    }
 
     if (isLive) {
       stallInterval = window.setInterval(() => {
@@ -326,6 +454,8 @@ export default function Player({
     video.addEventListener('pause', onPause)
     video.addEventListener('waiting', onWaiting)
     video.addEventListener('playing', onPlaying)
+    video.addEventListener('canplay', onCanPlay)
+    video.addEventListener('canplaythrough', onCanPlay)
     video.addEventListener('timeupdate', onTime)
     video.addEventListener('loadedmetadata', onMeta)
     video.addEventListener('durationchange', onMeta)
@@ -361,6 +491,8 @@ export default function Player({
       video.removeEventListener('pause', onPause)
       video.removeEventListener('waiting', onWaiting)
       video.removeEventListener('playing', onPlaying)
+      video.removeEventListener('canplay', onCanPlay)
+      video.removeEventListener('canplaythrough', onCanPlay)
       video.removeEventListener('timeupdate', onTime)
       video.removeEventListener('loadedmetadata', onMeta)
       video.removeEventListener('durationchange', onMeta)
@@ -444,6 +576,43 @@ export default function Player({
     onMutedChange?.(nextMuted)
   }
 
+  async function toggleFullscreen() {
+    const video = videoRef.current
+    const container = overlayRef.current
+    if (!video) return
+
+    const active = Boolean(getFullscreenElement()) || isVideoNativeFullscreen(video)
+
+    if (active) {
+      if (document.exitFullscreen) {
+        await document.exitFullscreen().catch(() => {})
+      } else if (document.webkitExitFullscreen) {
+        document.webkitExitFullscreen()
+      } else if (video.webkitExitFullscreen) {
+        video.webkitExitFullscreen()
+      }
+      return
+    }
+
+    if (isIosDevice() && typeof video.webkitEnterFullscreen === 'function') {
+      video.webkitEnterFullscreen()
+      return
+    }
+
+    const target = container || video
+    if (target.requestFullscreen) {
+      await target.requestFullscreen().catch(() => {
+        if (typeof video.webkitEnterFullscreen === 'function') {
+          video.webkitEnterFullscreen()
+        }
+      })
+    } else if (target.webkitRequestFullscreen) {
+      target.webkitRequestFullscreen()
+    } else if (typeof video.webkitEnterFullscreen === 'function') {
+      video.webkitEnterFullscreen()
+    }
+  }
+
   const totalDuration = durationHint > 0
     ? durationHint
     : ((duration > 0 && Number.isFinite(duration)) ? duration : 0)
@@ -460,8 +629,22 @@ export default function Player({
   const currentProgram = epg?.current
   const upcomingPrograms = (epg?.listings || []).filter((item) => !item.now).slice(0, 4)
 
+  const loadPhaseLabel = {
+    converting: 'Convirtiendo video',
+    loading: 'Cargando video',
+    connecting: 'Conectando canal',
+    ready: 'Listo para reproducir',
+    playing: 'Reproduciendo',
+    idle: 'Preparando',
+  }[loadPhase] || 'Cargando'
+
+  const showLoadOverlay = prepPercent < 100 || isWaiting || (isLive && (liveStatus === 'connecting' || liveStatus === 'buffering'))
+  const displayPrepPercent = isLive && liveStatus === 'buffering'
+    ? Math.max(prepPercent, 55)
+    : prepPercent
+
   return (
-    <div className="player-overlay">
+    <div className="player-overlay" ref={overlayRef}>
       <div className="player-header">
         <button type="button" className="player-close" onClick={onClose}>← Volver</button>
         <div className="player-header-main">
@@ -471,8 +654,19 @@ export default function Player({
       </div>
       {error ? <div className="player-error">{error}</div> : null}
       {isLive && muted ? <div className="player-muted-hint">Pulsa ▶ o 🔊 para activar el sonido</div> : null}
-      <div className="player-stage">
-        <video ref={videoRef} className="player-video" playsInline muted={muted}>
+      <div
+        className="player-stage"
+        onDoubleClick={toggleFullscreen}
+      >
+        <video
+          ref={videoRef}
+          className="player-video"
+          playsInline
+          muted={muted}
+          onClick={() => {
+            if (isIosDevice() && !playing) toggleFullscreen()
+          }}
+        >
           {subtitleSrc ? (
             <track
               key={subtitleSrc}
@@ -517,6 +711,28 @@ export default function Player({
                 )
               })}
             </ul>
+          </div>
+        ) : null}
+        {showLoadOverlay ? (
+          <div className="player-load-overlay">
+            <div className="player-load-card">
+              <div className="loading-spinner" />
+              <strong>{isWaiting ? 'Buffering…' : loadPhaseLabel}</strong>
+              <p className="player-load-detail">
+                {loadPhase === 'converting'
+                  ? 'Adaptando formato para tu dispositivo'
+                  : isLive
+                    ? LIVE_STATUS_LABELS[liveStatus] || 'Conectando…'
+                    : 'Descargando datos del servidor'}
+              </p>
+              <div className="player-load-progress">
+                <span style={{ width: `${displayPrepPercent}%` }} />
+              </div>
+              <span className="player-load-percent">{displayPrepPercent}%</span>
+              {!isLive && bufferPercent > 0 ? (
+                <span className="player-load-buffer">Buffer: {bufferPercent}%</span>
+              ) : null}
+            </div>
           </div>
         ) : null}
       </div>
@@ -644,11 +860,11 @@ export default function Player({
         />
         <button
           type="button"
-          className="player-btn"
-          onClick={() => videoRef.current?.requestFullscreen?.()}
-          aria-label="Pantalla completa"
+          className="player-btn player-btn--fullscreen"
+          onClick={toggleFullscreen}
+          aria-label={isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
         >
-          ⛶
+          {isFullscreen ? '⤢' : '⛶'}
         </button>
         {isVodLike && audioTracks.length > 1 ? (
           <label className="player-track-select">

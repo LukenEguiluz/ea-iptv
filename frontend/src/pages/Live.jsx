@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useState } from 'react'
-import { buildPlayerSession, fetchCatalog } from '../api'
+import { useEffect } from 'react'
+import { fetchCatalog } from '../api'
 import CatalogLoadOverlay from '../components/CatalogLoadOverlay'
 import LoadingState from '../components/LoadingState'
 import MediaCard from '../components/MediaCard'
 import Navbar from '../components/Navbar'
-import Player from '../components/Player'
 import SearchBar from '../components/SearchBar'
+import { usePlayback } from '../context/PlaybackContext'
 import usePaginatedCatalog from '../hooks/usePaginatedCatalog'
 
 export default function Live() {
+  const { playItem, setLiveChannels } = usePlayback()
   const {
     ALL_CATEGORY,
     categories,
@@ -26,9 +27,6 @@ export default function Live() {
     loadMoreRef,
   } = usePaginatedCatalog('live')
 
-  const [player, setPlayer] = useState(null)
-  const [liveAudioOn, setLiveAudioOn] = useState(false)
-
   useEffect(() => {
     fetchCatalog('/catalog/live/categories')
       .then((data) => {
@@ -40,59 +38,23 @@ export default function Live() {
       .finally(() => setLoadingCats(false))
   }, [ALL_CATEGORY, setActiveCategory, setCategories, setError, setLoadingCats])
 
+  useEffect(() => {
+    setLiveChannels(streams)
+  }, [streams, setLiveChannels])
+
   async function openItem(item) {
     try {
-      const session = await buildPlayerSession(
-        {
-          content_type: 'live',
-          item_id: String(item.stream_id || item.item_id),
-          name: item.name,
-          image: item.stream_icon || item.image,
-          category_name: item.category_name,
-        },
-        { withEpg: true },
-      )
-      setLiveAudioOn(false)
-      setPlayer(session)
+      await playItem({
+        content_type: 'live',
+        item_id: String(item.stream_id || item.item_id),
+        name: item.name,
+        image: item.stream_icon || item.image,
+        category_name: item.category_name,
+      })
     } catch (err) {
       setError(err.message)
     }
   }
-
-  const changeLiveChannel = useCallback(async (direction, selectedChannel = null) => {
-    if (!player || streams.length < 2) return
-
-    const currentId = String(player.meta?.itemId || '')
-    const currentIndex = streams.findIndex(
-      (item) => String(item.stream_id || item.item_id) === currentId,
-    )
-
-    let nextItem = selectedChannel
-    if (!nextItem) {
-      const baseIndex = currentIndex >= 0 ? currentIndex : 0
-      const offset = direction === 'prev' ? -1 : 1
-      const nextIndex = (baseIndex + offset + streams.length) % streams.length
-      nextItem = streams[nextIndex]
-    }
-
-    if (!nextItem) return
-
-    try {
-      const session = await buildPlayerSession(
-        {
-          content_type: 'live',
-          item_id: String(nextItem.stream_id || nextItem.item_id),
-          name: nextItem.name,
-          image: nextItem.stream_icon || nextItem.image,
-          category_name: nextItem.category_name,
-        },
-        { withEpg: true },
-      )
-      setPlayer(session)
-    } catch (err) {
-      setError(err.message)
-    }
-  }, [player, streams, setError])
 
   return (
     <div className="app-shell">
@@ -155,23 +117,6 @@ export default function Live() {
         {loadingMore ? <LoadingState message="Cargando más canales…" compact /> : null}
         {streams.length < total ? <div ref={loadMoreRef} className="catalog-scroll-sentinel" /> : null}
       </main>
-      {player ? (
-        <Player
-          title={player.title}
-          url={player.url}
-          type={player.type}
-          epg={player.epg}
-          meta={player.meta}
-          initialMuted={!liveAudioOn}
-          liveChannels={streams}
-          onLiveChannelChange={changeLiveChannel}
-          onMutedChange={(isMuted) => setLiveAudioOn(!isMuted)}
-          onClose={() => {
-            setPlayer(null)
-            setLiveAudioOn(false)
-          }}
-        />
-      ) : null}
     </div>
   )
 }

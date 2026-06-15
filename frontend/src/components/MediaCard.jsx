@@ -5,7 +5,7 @@ export default function MediaCard({ title, image, subtitle, onClick }) {
   const showImage = image && !imageFailed
 
   return (
-    <button type="button" className="media-card" onClick={onClick}>
+    <button type="button" className="media-card focusable-card" onClick={onClick}>
       <div className="media-card-image">
         {showImage ? (
           <img

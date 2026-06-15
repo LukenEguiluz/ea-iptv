@@ -2,6 +2,8 @@ import { useEffect } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { heartbeat } from './api'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import { PlaybackProvider } from './context/PlaybackContext'
+import { SearchProvider } from './context/SearchContext'
 import Home from './pages/Home'
 import Live from './pages/Live'
 import Login from './pages/Login'
@@ -45,7 +47,11 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <AppRoutes />
+        <PlaybackProvider>
+          <SearchProvider>
+            <AppRoutes />
+          </SearchProvider>
+        </PlaybackProvider>
       </BrowserRouter>
     </AuthProvider>
   )

@@ -1,17 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { fetchCatalog, fetchPlayUrlWithAudio } from '../api'
+import { fetchCatalog } from '../api'
 import CatalogLoadOverlay from '../components/CatalogLoadOverlay'
 import ContinueWatchingRow from '../components/ContinueWatchingRow'
 import LoadingState from '../components/LoadingState'
 import MediaCard from '../components/MediaCard'
 import Navbar from '../components/Navbar'
-import Player from '../components/Player'
 import SearchBar from '../components/SearchBar'
+import { usePlayback } from '../context/PlaybackContext'
 import usePaginatedCatalog from '../hooks/usePaginatedCatalog'
 
 export default function Series() {
   const navigate = useNavigate()
+  const { setPlayer } = usePlayback()
   const {
     ALL_CATEGORY,
     categories,
@@ -29,8 +30,6 @@ export default function Series() {
     loadMoreRef,
   } = usePaginatedCatalog('series')
 
-  const [player, setPlayer] = useState(null)
-
   useEffect(() => {
     fetchCatalog('/catalog/series/categories')
       .then((data) => {
@@ -41,17 +40,6 @@ export default function Series() {
       .catch((err) => setError(err.message))
       .finally(() => setLoadingCats(false))
   }, [ALL_CATEGORY, setActiveCategory, setCategories, setError, setLoadingCats])
-
-  async function handleAudioChange(playPath, audioIndex, resumePosition) {
-    const playData = await fetchPlayUrlWithAudio(playPath, audioIndex)
-    setPlayer((prev) => ({
-      ...prev,
-      url: playData.url,
-      tracks: playData.tracks || prev?.tracks,
-      durationHint: playData.duration_seconds || prev?.durationHint,
-      resumeAt: resumePosition,
-    }))
-  }
 
   return (
     <div className="app-shell">
@@ -115,19 +103,6 @@ export default function Series() {
         {loadingMore ? <LoadingState message="Cargando más series…" compact /> : null}
         {series.length < total ? <div ref={loadMoreRef} className="catalog-scroll-sentinel" /> : null}
       </main>
-      {player ? (
-        <Player
-          title={player.title}
-          url={player.url}
-          type={player.type}
-          meta={player.meta}
-          durationHint={player.durationHint || 0}
-          tracks={player.tracks}
-          resumeAt={player.resumeAt || 0}
-          onUrlChange={handleAudioChange}
-          onClose={() => setPlayer(null)}
-        />
-      ) : null}
     </div>
   )
 }

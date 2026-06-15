@@ -1,15 +1,16 @@
-import { useEffect, useState } from 'react'
-import { buildPlayerSession, fetchCatalog, fetchPlayUrlWithAudio } from '../api'
+import { useEffect } from 'react'
+import { fetchCatalog } from '../api'
 import CatalogLoadOverlay from '../components/CatalogLoadOverlay'
 import ContinueWatchingRow from '../components/ContinueWatchingRow'
 import LoadingState from '../components/LoadingState'
 import MediaCard from '../components/MediaCard'
 import Navbar from '../components/Navbar'
-import Player from '../components/Player'
 import SearchBar from '../components/SearchBar'
+import { usePlayback } from '../context/PlaybackContext'
 import usePaginatedCatalog from '../hooks/usePaginatedCatalog'
 
 export default function Movies() {
+  const { playItem, setPlayer } = usePlayback()
   const {
     ALL_CATEGORY,
     categories,
@@ -27,8 +28,6 @@ export default function Movies() {
     loadMoreRef,
   } = usePaginatedCatalog('vod')
 
-  const [player, setPlayer] = useState(null)
-
   useEffect(() => {
     fetchCatalog('/catalog/vod/categories')
       .then((data) => {
@@ -41,7 +40,7 @@ export default function Movies() {
 
   async function openItem(item) {
     try {
-      const session = await buildPlayerSession({
+      await playItem({
         content_type: 'vod',
         item_id: String(item.stream_id || item.item_id),
         name: item.name,
@@ -49,21 +48,9 @@ export default function Movies() {
         category_name: item.category_name,
         container_extension: item.container_extension || 'mp4',
       })
-      setPlayer(session)
     } catch (err) {
       setError(err.message)
     }
-  }
-
-  async function handleAudioChange(playPath, audioIndex, resumePosition) {
-    const playData = await fetchPlayUrlWithAudio(playPath, audioIndex)
-    setPlayer((prev) => ({
-      ...prev,
-      url: playData.url,
-      tracks: playData.tracks || prev?.tracks,
-      durationHint: playData.duration_seconds || prev?.durationHint,
-      resumeAt: resumePosition,
-    }))
   }
 
   return (
@@ -128,19 +115,6 @@ export default function Movies() {
         {loadingMore ? <LoadingState message="Cargando más películas…" compact /> : null}
         {movies.length < total ? <div ref={loadMoreRef} className="catalog-scroll-sentinel" /> : null}
       </main>
-      {player ? (
-        <Player
-          title={player.title}
-          url={player.url}
-          type={player.type}
-          meta={player.meta}
-          durationHint={player.durationHint || 0}
-          tracks={player.tracks}
-          resumeAt={player.resumeAt || 0}
-          onUrlChange={handleAudioChange}
-          onClose={() => setPlayer(null)}
-        />
-      ) : null}
     </div>
   )
 }
