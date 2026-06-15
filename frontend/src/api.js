@@ -84,6 +84,35 @@ export function isLoggedIn() {
   return Boolean(getTokens()?.access)
 }
 
+const CATALOG_PATHS = {
+  live: '/catalog/live/streams',
+  vod: '/catalog/vod/streams',
+  series: '/catalog/series',
+}
+
+export async function fetchPaginatedCatalog(catalogType, categoryId, { offset = 0, limit = 300 } = {}) {
+  const basePath = CATALOG_PATHS[catalogType]
+  if (!basePath) {
+    throw new Error('Tipo de catálogo no soportado')
+  }
+  const params = new URLSearchParams({
+    category_id: categoryId,
+    paginated: '1',
+    offset: String(offset),
+    limit: String(limit),
+  })
+  const response = await apiFetch(`${basePath}?${params}`)
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'Error al cargar catálogo')
+  }
+  return response.json()
+}
+
+export async function fetchVodCatalog(categoryId, options = {}) {
+  return fetchPaginatedCatalog('vod', categoryId, options)
+}
+
 export async function fetchCatalog(path) {
   const response = await apiFetch(path)
   if (!response.ok) {

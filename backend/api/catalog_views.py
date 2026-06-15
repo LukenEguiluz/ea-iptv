@@ -5,12 +5,21 @@ from rest_framework.views import APIView
 
 from sessions.services import SessionError
 
+from library.models import CatalogItem
+
 from .epg_utils import normalize_epg_list
 from .catalog_utils import (
     proxy_play_url,
     proxy_subtitle_url,
     rewrite_catalog_list,
     rewrite_series_info,
+)
+from .catalog_list import (
+    _parse_offset,
+    _parse_page_limit,
+    catalog_index_ready,
+    list_catalog_from_index,
+    paginate_list,
 )
 from .stream_utils import get_media_playback_info
 from .xtream import (
@@ -113,19 +122,82 @@ class LiveCategoriesView(CatalogBaseView):
         return Response(data)
 
 
+def _paginated_catalog_response(request, *, paginated: bool, payload: dict):
+    if paginated:
+        return Response(payload)
+    return Response(payload['items'])
+
+
+def _fetch_xtream_catalog(request, content_type: str, category_id: str) -> list:
+    user = request.user
+    ip = _client_ip(request)
+
+    if content_type == 'live':
+        categories_action = 'get_live_categories'
+        streams_action = 'get_live_streams'
+    elif content_type == 'vod':
+        categories_action = 'get_vod_categories'
+        streams_action = 'get_vod_streams'
+    else:
+        categories_action = 'get_series_categories'
+        streams_action = 'get_series'
+
+    if category_id == 'all':
+        categories = xtream_request(user, categories_action, ip_address=ip)
+        data = []
+        if isinstance(categories, list):
+            for cat in categories:
+                cat_id = cat.get('category_id')
+                if not cat_id:
+                    continue
+                streams = xtream_request(
+                    user,
+                    streams_action,
+                    ip_address=ip,
+                    category_id=cat_id,
+                )
+                if isinstance(streams, list):
+                    data.extend(streams)
+        return data
+
+    data = xtream_request(
+        user,
+        streams_action,
+        ip_address=ip,
+        category_id=category_id,
+    )
+    return data if isinstance(data, list) else []
+
+
 class LiveStreamsView(CatalogBaseView):
     def get(self, request):
-        category_id = request.query_params.get('category_id')
+        category_id = request.query_params.get('category_id', '').strip()
         if not category_id:
             return _category_required_response()
 
-        data = xtream_request(
-            request.user,
-            'get_live_streams',
-            ip_address=_client_ip(request),
-            category_id=category_id,
+        paginated = request.query_params.get('paginated', '').strip().lower() in {'1', 'true', 'yes'}
+        offset = _parse_offset(request.query_params.get('offset', '0'))
+        page_limit = _parse_page_limit(request.query_params.get('limit', '300'))
+
+        if catalog_index_ready():
+            payload = list_catalog_from_index(
+                request,
+                content_type=CatalogItem.CONTENT_LIVE,
+                category_id=category_id,
+                offset=offset,
+                limit=page_limit,
+            )
+            return _paginated_catalog_response(request, paginated=paginated, payload=payload)
+
+        data = rewrite_catalog_list(
+            request,
+            _fetch_xtream_catalog(request, 'live', category_id),
         )
-        return Response(rewrite_catalog_list(request, limit_results(data, request.query_params.get('limit'))))
+        return _paginated_catalog_response(
+            request,
+            paginated=paginated,
+            payload=paginate_list(data, offset, page_limit),
+        )
 
 
 class VodCategoriesView(CatalogBaseView):
@@ -136,17 +208,33 @@ class VodCategoriesView(CatalogBaseView):
 
 class VodStreamsView(CatalogBaseView):
     def get(self, request):
-        category_id = request.query_params.get('category_id')
+        category_id = request.query_params.get('category_id', '').strip()
         if not category_id:
             return _category_required_response()
 
-        data = xtream_request(
-            request.user,
-            'get_vod_streams',
-            ip_address=_client_ip(request),
-            category_id=category_id,
+        paginated = request.query_params.get('paginated', '').strip().lower() in {'1', 'true', 'yes'}
+        offset = _parse_offset(request.query_params.get('offset', '0'))
+        page_limit = _parse_page_limit(request.query_params.get('limit', '300'))
+
+        if catalog_index_ready():
+            payload = list_catalog_from_index(
+                request,
+                content_type=CatalogItem.CONTENT_VOD,
+                category_id=category_id,
+                offset=offset,
+                limit=page_limit,
+            )
+            return _paginated_catalog_response(request, paginated=paginated, payload=payload)
+
+        data = rewrite_catalog_list(
+            request,
+            _fetch_xtream_catalog(request, 'vod', category_id),
         )
-        return Response(rewrite_catalog_list(request, limit_results(data, request.query_params.get('limit'))))
+        return _paginated_catalog_response(
+            request,
+            paginated=paginated,
+            payload=paginate_list(data, offset, page_limit),
+        )
 
 
 class SeriesCategoriesView(CatalogBaseView):
@@ -157,17 +245,33 @@ class SeriesCategoriesView(CatalogBaseView):
 
 class SeriesListView(CatalogBaseView):
     def get(self, request):
-        category_id = request.query_params.get('category_id')
+        category_id = request.query_params.get('category_id', '').strip()
         if not category_id:
             return _category_required_response()
 
-        data = xtream_request(
-            request.user,
-            'get_series',
-            ip_address=_client_ip(request),
-            category_id=category_id,
+        paginated = request.query_params.get('paginated', '').strip().lower() in {'1', 'true', 'yes'}
+        offset = _parse_offset(request.query_params.get('offset', '0'))
+        page_limit = _parse_page_limit(request.query_params.get('limit', '300'))
+
+        if catalog_index_ready():
+            payload = list_catalog_from_index(
+                request,
+                content_type=CatalogItem.CONTENT_SERIES,
+                category_id=category_id,
+                offset=offset,
+                limit=page_limit,
+            )
+            return _paginated_catalog_response(request, paginated=paginated, payload=payload)
+
+        data = rewrite_catalog_list(
+            request,
+            _fetch_xtream_catalog(request, 'series', category_id),
         )
-        return Response(rewrite_catalog_list(request, limit_results(data, request.query_params.get('limit'))))
+        return _paginated_catalog_response(
+            request,
+            paginated=paginated,
+            payload=paginate_list(data, offset, page_limit),
+        )
 
 
 class SeriesInfoView(CatalogBaseView):

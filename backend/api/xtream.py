@@ -54,14 +54,15 @@ def xtream_request(user, action: str, ip_address: str | None = None, **params):
     return xtream_raw_request(username, password, action, **params)
 
 
-def xtream_raw_request(username: str, password: str, action: str, **params):
+def xtream_raw_request(username: str, password: str, action: str, *, use_cache: bool = True, **params):
     cache_key = (username, action, tuple(sorted((k, str(v)) for k, v in params.items())))
-    cached = _cache.get(cache_key)
-    if cached:
-        expires_at, payload = cached
-        if time.time() < expires_at:
-            return payload
-        _cache.pop(cache_key, None)
+    if use_cache:
+        cached = _cache.get(cache_key)
+        if cached:
+            expires_at, payload = cached
+            if time.time() < expires_at:
+                return payload
+            _cache.pop(cache_key, None)
 
     query = {
         'username': username,
@@ -83,7 +84,8 @@ def xtream_raw_request(username: str, password: str, action: str, **params):
     if isinstance(data, dict) and data.get('user_info', {}).get('auth') == 0:
         raise XtreamError('Credenciales Xtream rechazadas.', code='xtream_auth_failed')
 
-    _cache[cache_key] = (time.time() + _CACHE_TTL_SECONDS, data)
+    if use_cache:
+        _cache[cache_key] = (time.time() + _CACHE_TTL_SECONDS, data)
     return data
 
 
@@ -103,7 +105,7 @@ def limit_results(data, limit: str | None):
     if not limit or not isinstance(data, list):
         return data
     try:
-        n = max(1, min(int(limit), 500))
+        n = max(1, min(int(limit), 50000))
     except (TypeError, ValueError):
         return data
     return data[:n]

@@ -1072,6 +1072,72 @@ input {
   color: rgba(255, 255, 255, 0.55);
 }
 
+.catalog-count {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.catalog-scroll-sentinel {
+  height: 1px;
+  width: 100%;
+}
+
+.catalog-load-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 10, 18, 0.82);
+  backdrop-filter: blur(6px);
+}
+
+.catalog-load-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  width: min(22rem, 90vw);
+  padding: 2rem 1.5rem;
+  border-radius: 1rem;
+  background: rgba(22, 26, 38, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: center;
+}
+
+.catalog-load-card strong {
+  font-size: 1.1rem;
+}
+
+.catalog-load-card p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 0.9rem;
+}
+
+.catalog-load-progress {
+  width: 100%;
+  height: 0.35rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.catalog-load-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #ff3b57, #ff6b4a);
+  transition: width 0.25s ease;
+}
+
+.catalog-load-percent {
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
 .loading-state--compact {
   padding: 1rem;
   min-height: auto;

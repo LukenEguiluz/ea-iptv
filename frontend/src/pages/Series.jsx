@@ -1,25 +1,34 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { fetchCatalog, fetchPlayUrlWithAudio } from '../api'
+import CatalogLoadOverlay from '../components/CatalogLoadOverlay'
 import ContinueWatchingRow from '../components/ContinueWatchingRow'
 import LoadingState from '../components/LoadingState'
 import MediaCard from '../components/MediaCard'
 import Navbar from '../components/Navbar'
 import Player from '../components/Player'
 import SearchBar from '../components/SearchBar'
-
-function seriesPath(categoryId) {
-  return `/catalog/series?limit=200&category_id=${categoryId}`
-}
+import usePaginatedCatalog from '../hooks/usePaginatedCatalog'
 
 export default function Series() {
   const navigate = useNavigate()
-  const [categories, setCategories] = useState([])
-  const [series, setSeries] = useState([])
-  const [activeCategory, setActiveCategory] = useState('')
-  const [loadingCats, setLoadingCats] = useState(true)
-  const [loadingSeries, setLoadingSeries] = useState(false)
-  const [error, setError] = useState('')
+  const {
+    ALL_CATEGORY,
+    categories,
+    setCategories,
+    items: series,
+    activeCategory,
+    setActiveCategory,
+    total,
+    loadingCats,
+    setLoadingCats,
+    loading,
+    loadingMore,
+    error,
+    setError,
+    loadMoreRef,
+  } = usePaginatedCatalog('series')
+
   const [player, setPlayer] = useState(null)
 
   useEffect(() => {
@@ -27,24 +36,11 @@ export default function Series() {
       .then((data) => {
         const cats = Array.isArray(data) ? data : []
         setCategories(cats)
-        if (cats[0]?.category_id) {
-          setActiveCategory(String(cats[0].category_id))
-        }
+        setActiveCategory(ALL_CATEGORY)
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoadingCats(false))
-  }, [])
-
-  useEffect(() => {
-    if (!activeCategory) return undefined
-
-    setLoadingSeries(true)
-    setError('')
-    fetchCatalog(seriesPath(activeCategory))
-      .then((data) => setSeries(Array.isArray(data) ? data : []))
-      .catch((err) => setError(err.message))
-      .finally(() => setLoadingSeries(false))
-  }, [activeCategory])
+  }, [ALL_CATEGORY, setActiveCategory, setCategories, setError, setLoadingCats])
 
   async function handleAudioChange(playPath, audioIndex, resumePosition) {
     const playData = await fetchPlayUrlWithAudio(playPath, audioIndex)
@@ -60,6 +56,12 @@ export default function Series() {
   return (
     <div className="app-shell">
       <Navbar active="series" />
+      <CatalogLoadOverlay
+        show={loading && series.length === 0}
+        title="Cargando series"
+        loaded={series.length}
+        total={total}
+      />
       <main className="page-content page-content--padded">
         <h1 className="page-title">Series</h1>
         <ContinueWatchingRow type="series" onPlay={setPlayer} />
@@ -72,6 +74,13 @@ export default function Series() {
         {error ? <div className="page-error">{error}</div> : null}
         {loadingCats ? <LoadingState message="Cargando categorías…" /> : (
           <div className="category-tabs">
+            <button
+              type="button"
+              className={activeCategory === ALL_CATEGORY ? 'active' : ''}
+              onClick={() => setActiveCategory(ALL_CATEGORY)}
+            >
+              Todas
+            </button>
             {categories.map((cat) => (
               <button
                 key={cat.category_id}
@@ -84,20 +93,27 @@ export default function Series() {
             ))}
           </div>
         )}
-        {loadingSeries ? <LoadingState message="Cargando series…" /> : (
-          <div className="media-grid media-grid--posters">
-            {series.length === 0 ? <p className="page-empty-inline">Sin series en esta categoría.</p> : null}
-            {series.map((item) => (
-              <MediaCard
-                key={item.series_id}
-                title={item.name}
-                image={item.cover || item.cover_big}
-                subtitle={item.genre || item.rating}
-                onClick={() => navigate(`/series/${item.series_id}`)}
-              />
-            ))}
-          </div>
-        )}
+        {!loading && total > 0 ? (
+          <p className="catalog-count">
+            Mostrando {series.length.toLocaleString()} de {total.toLocaleString()} series
+          </p>
+        ) : null}
+        <div className="media-grid media-grid--posters">
+          {series.length === 0 && !loading ? (
+            <p className="page-empty-inline">Sin series en esta categoría.</p>
+          ) : null}
+          {series.map((item) => (
+            <MediaCard
+              key={`${item.series_id}-${item.category_id || ''}`}
+              title={item.name}
+              image={item.cover || item.cover_big}
+              subtitle={item.genre || item.rating}
+              onClick={() => navigate(`/series/${item.series_id}`)}
+            />
+          ))}
+        </div>
+        {loadingMore ? <LoadingState message="Cargando más series…" compact /> : null}
+        {series.length < total ? <div ref={loadMoreRef} className="catalog-scroll-sentinel" /> : null}
       </main>
       {player ? (
         <Player

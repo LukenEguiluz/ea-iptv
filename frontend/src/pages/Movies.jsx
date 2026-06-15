@@ -1,23 +1,32 @@
 import { useEffect, useState } from 'react'
 import { buildPlayerSession, fetchCatalog, fetchPlayUrlWithAudio } from '../api'
+import CatalogLoadOverlay from '../components/CatalogLoadOverlay'
 import ContinueWatchingRow from '../components/ContinueWatchingRow'
 import LoadingState from '../components/LoadingState'
 import MediaCard from '../components/MediaCard'
 import Navbar from '../components/Navbar'
 import Player from '../components/Player'
 import SearchBar from '../components/SearchBar'
-
-function streamsPath(categoryId) {
-  return `/catalog/vod/streams?limit=200&category_id=${categoryId}`
-}
+import usePaginatedCatalog from '../hooks/usePaginatedCatalog'
 
 export default function Movies() {
-  const [categories, setCategories] = useState([])
-  const [movies, setMovies] = useState([])
-  const [activeCategory, setActiveCategory] = useState('')
-  const [loadingCats, setLoadingCats] = useState(true)
-  const [loadingStreams, setLoadingStreams] = useState(false)
-  const [error, setError] = useState('')
+  const {
+    ALL_CATEGORY,
+    categories,
+    setCategories,
+    items: movies,
+    activeCategory,
+    setActiveCategory,
+    total,
+    loadingCats,
+    setLoadingCats,
+    loading,
+    loadingMore,
+    error,
+    setError,
+    loadMoreRef,
+  } = usePaginatedCatalog('vod')
+
   const [player, setPlayer] = useState(null)
 
   useEffect(() => {
@@ -25,24 +34,10 @@ export default function Movies() {
       .then((data) => {
         const cats = Array.isArray(data) ? data : []
         setCategories(cats)
-        if (cats[0]?.category_id) {
-          setActiveCategory(String(cats[0].category_id))
-        }
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoadingCats(false))
-  }, [])
-
-  useEffect(() => {
-    if (!activeCategory) return undefined
-
-    setLoadingStreams(true)
-    setError('')
-    fetchCatalog(streamsPath(activeCategory))
-      .then((data) => setMovies(Array.isArray(data) ? data : []))
-      .catch((err) => setError(err.message))
-      .finally(() => setLoadingStreams(false))
-  }, [activeCategory])
+  }, [setCategories, setError, setLoadingCats])
 
   async function openItem(item) {
     try {
@@ -74,6 +69,12 @@ export default function Movies() {
   return (
     <div className="app-shell">
       <Navbar active="movies" />
+      <CatalogLoadOverlay
+        show={loading && movies.length === 0}
+        title="Cargando películas"
+        loaded={movies.length}
+        total={total}
+      />
       <main className="page-content page-content--padded">
         <h1 className="page-title">Películas</h1>
         <ContinueWatchingRow type="vod" onPlay={setPlayer} />
@@ -86,6 +87,13 @@ export default function Movies() {
         {error ? <div className="page-error">{error}</div> : null}
         {loadingCats ? <LoadingState message="Cargando categorías…" /> : (
           <div className="category-tabs">
+            <button
+              type="button"
+              className={activeCategory === ALL_CATEGORY ? 'active' : ''}
+              onClick={() => setActiveCategory(ALL_CATEGORY)}
+            >
+              Todas
+            </button>
             {categories.map((cat) => (
               <button
                 key={cat.category_id}
@@ -98,20 +106,27 @@ export default function Movies() {
             ))}
           </div>
         )}
-        {loadingStreams ? <LoadingState message="Cargando películas…" /> : (
-          <div className="media-grid media-grid--posters">
-            {movies.length === 0 ? <p className="page-empty-inline">Sin películas en esta categoría.</p> : null}
-            {movies.map((item) => (
-              <MediaCard
-                key={item.stream_id}
-                title={item.name}
-                image={item.stream_icon}
-                subtitle={item.rating}
-                onClick={() => openItem(item)}
-              />
-            ))}
-          </div>
-        )}
+        {!loading && total > 0 ? (
+          <p className="catalog-count">
+            Mostrando {movies.length.toLocaleString()} de {total.toLocaleString()} películas
+          </p>
+        ) : null}
+        <div className="media-grid media-grid--posters">
+          {movies.length === 0 && !loading ? (
+            <p className="page-empty-inline">Sin películas en esta categoría.</p>
+          ) : null}
+          {movies.map((item) => (
+            <MediaCard
+              key={`${item.stream_id}-${item.category_id || ''}`}
+              title={item.name}
+              image={item.stream_icon}
+              subtitle={item.rating || item.category_name}
+              onClick={() => openItem(item)}
+            />
+          ))}
+        </div>
+        {loadingMore ? <LoadingState message="Cargando más películas…" compact /> : null}
+        {movies.length < total ? <div ref={loadMoreRef} className="catalog-scroll-sentinel" /> : null}
       </main>
       {player ? (
         <Player

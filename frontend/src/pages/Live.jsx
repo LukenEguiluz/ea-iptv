@@ -1,22 +1,31 @@
 import { useCallback, useEffect, useState } from 'react'
 import { buildPlayerSession, fetchCatalog } from '../api'
+import CatalogLoadOverlay from '../components/CatalogLoadOverlay'
 import LoadingState from '../components/LoadingState'
 import MediaCard from '../components/MediaCard'
 import Navbar from '../components/Navbar'
 import Player from '../components/Player'
 import SearchBar from '../components/SearchBar'
-
-function streamsPath(categoryId) {
-  return `/catalog/live/streams?limit=200&category_id=${categoryId}`
-}
+import usePaginatedCatalog from '../hooks/usePaginatedCatalog'
 
 export default function Live() {
-  const [categories, setCategories] = useState([])
-  const [streams, setStreams] = useState([])
-  const [activeCategory, setActiveCategory] = useState('')
-  const [loadingCats, setLoadingCats] = useState(true)
-  const [loadingStreams, setLoadingStreams] = useState(false)
-  const [error, setError] = useState('')
+  const {
+    ALL_CATEGORY,
+    categories,
+    setCategories,
+    items: streams,
+    activeCategory,
+    setActiveCategory,
+    total,
+    loadingCats,
+    setLoadingCats,
+    loading,
+    loadingMore,
+    error,
+    setError,
+    loadMoreRef,
+  } = usePaginatedCatalog('live')
+
   const [player, setPlayer] = useState(null)
   const [liveAudioOn, setLiveAudioOn] = useState(false)
 
@@ -25,24 +34,11 @@ export default function Live() {
       .then((data) => {
         const cats = Array.isArray(data) ? data : []
         setCategories(cats)
-        if (cats[0]?.category_id) {
-          setActiveCategory(String(cats[0].category_id))
-        }
+        setActiveCategory(ALL_CATEGORY)
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoadingCats(false))
-  }, [])
-
-  useEffect(() => {
-    if (!activeCategory) return undefined
-
-    setLoadingStreams(true)
-    setError('')
-    fetchCatalog(streamsPath(activeCategory))
-      .then((data) => setStreams(Array.isArray(data) ? data : []))
-      .catch((err) => setError(err.message))
-      .finally(() => setLoadingStreams(false))
-  }, [activeCategory])
+  }, [ALL_CATEGORY, setActiveCategory, setCategories, setError, setLoadingCats])
 
   async function openItem(item) {
     try {
@@ -96,11 +92,17 @@ export default function Live() {
     } catch (err) {
       setError(err.message)
     }
-  }, [player, streams])
+  }, [player, streams, setError])
 
   return (
     <div className="app-shell">
       <Navbar active="tv" />
+      <CatalogLoadOverlay
+        show={loading && streams.length === 0}
+        title="Cargando canales"
+        loaded={streams.length}
+        total={total}
+      />
       <main className="page-content page-content--padded">
         <h1 className="page-title">TV en vivo</h1>
         <SearchBar
@@ -112,6 +114,13 @@ export default function Live() {
         {error ? <div className="page-error">{error}</div> : null}
         {loadingCats ? <LoadingState message="Cargando categorías…" /> : (
           <div className="category-tabs">
+            <button
+              type="button"
+              className={activeCategory === ALL_CATEGORY ? 'active' : ''}
+              onClick={() => setActiveCategory(ALL_CATEGORY)}
+            >
+              Todas
+            </button>
             {categories.map((cat) => (
               <button
                 key={cat.category_id}
@@ -124,20 +133,27 @@ export default function Live() {
             ))}
           </div>
         )}
-        {loadingStreams ? <LoadingState message="Cargando canales…" /> : (
-          <div className="media-grid">
-            {streams.length === 0 ? <p className="page-empty-inline">Sin canales en esta categoría.</p> : null}
-            {streams.map((item) => (
-              <MediaCard
-                key={item.stream_id}
-                title={item.name}
-                image={item.stream_icon}
-                subtitle={item.category_name}
-                onClick={() => openItem(item)}
-              />
-            ))}
-          </div>
-        )}
+        {!loading && total > 0 ? (
+          <p className="catalog-count">
+            Mostrando {streams.length.toLocaleString()} de {total.toLocaleString()} canales
+          </p>
+        ) : null}
+        <div className="media-grid">
+          {streams.length === 0 && !loading ? (
+            <p className="page-empty-inline">Sin canales en esta categoría.</p>
+          ) : null}
+          {streams.map((item) => (
+            <MediaCard
+              key={`${item.stream_id}-${item.category_id || ''}`}
+              title={item.name}
+              image={item.stream_icon}
+              subtitle={item.category_name}
+              onClick={() => openItem(item)}
+            />
+          ))}
+        </div>
+        {loadingMore ? <LoadingState message="Cargando más canales…" compact /> : null}
+        {streams.length < total ? <div ref={loadMoreRef} className="catalog-scroll-sentinel" /> : null}
       </main>
       {player ? (
         <Player

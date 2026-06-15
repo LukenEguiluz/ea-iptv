@@ -33,7 +33,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'accounts',
     'sessions.apps.IptvSessionsConfig',
-    'library',
+    'library.apps.LibraryConfig',
     'api',
 ]
 
@@ -132,6 +132,13 @@ IPTV_ENCRYPTION_KEY = os.environ.get('IPTV_ENCRYPTION_KEY', '')
 XTREAM_SERVER_URL = os.environ.get('XTREAM_SERVER_URL', '').strip().rstrip('/')
 if XTREAM_SERVER_URL and not XTREAM_SERVER_URL.startswith(('http://', 'https://')):
     XTREAM_SERVER_URL = f'http://{XTREAM_SERVER_URL}'
+
+CATALOG_SYNC_INTERVAL_HOURS = float(os.environ.get('CATALOG_SYNC_INTERVAL_HOURS', '4'))
+CATALOG_SYNC_CATEGORY_WORKERS = int(os.environ.get('CATALOG_SYNC_CATEGORY_WORKERS', '10'))
+CATALOG_SYNC_ACCOUNT_WORKERS = int(os.environ.get('CATALOG_SYNC_ACCOUNT_WORKERS', '5'))
+CATALOG_SYNC_TYPE_WORKERS = int(os.environ.get('CATALOG_SYNC_TYPE_WORKERS', '3'))
+CATALOG_ENRICH_CAST_ON_SYNC = os.environ.get('CATALOG_ENRICH_CAST_ON_SYNC', 'true').lower() == 'true'
+CATALOG_ENRICH_BATCH_LIMIT = int(os.environ.get('CATALOG_ENRICH_BATCH_LIMIT', '300'))
 
 LOGGING = {
     'version': 1,
