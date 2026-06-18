@@ -66,6 +66,12 @@ export default function usePaginatedCatalog(catalogType) {
     return () => observer.disconnect()
   }, [activeCategory, items.length, loadItems, loading, loadingMore, total])
 
+  const reloadCurrentItems = useCallback(() => {
+    setItems([])
+    setTotal(0)
+    return loadItems(activeCategory, { append: false, offset: 0 })
+  }, [activeCategory, loadItems])
+
   return {
     ALL_CATEGORY,
     categories,
@@ -81,5 +87,6 @@ export default function usePaginatedCatalog(catalogType) {
     error,
     setError,
     loadMoreRef,
+    reloadCurrentItems,
   }
 }

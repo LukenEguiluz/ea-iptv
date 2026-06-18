@@ -72,7 +72,7 @@ export async function login(username, password) {
 
   const tokens = await response.json()
   setTokens(tokens)
-  await apiFetch('/session/start', { method: 'POST', body: '{}' })
+  await ensureGatewaySession()
   return tokens
 }
 
@@ -122,6 +122,19 @@ export async function fetchCatalog(path) {
   return response.json()
 }
 
+export async function fetchLiveEpg(itemId, limit = 8) {
+  const params = new URLSearchParams({ limit: String(limit) })
+  const response = await apiFetch(`/catalog/live/${itemId}/epg?${params}`)
+  if (!response.ok) {
+    return {
+      has_epg: false,
+      listings: [],
+      current: null,
+    }
+  }
+  return response.json()
+}
+
 export async function fetchPlayUrl(path) {
   const response = await apiFetch(path)
   if (!response.ok) {
@@ -138,6 +151,20 @@ export async function fetchPlayUrlWithAudio(basePath, audioIndex) {
 
 export async function heartbeat() {
   await apiFetch('/session/heartbeat', { method: 'POST', body: '{}' })
+}
+
+export async function ensureGatewaySession() {
+  const current = await apiFetch('/session/current')
+  if (current.ok) {
+    return current.json()
+  }
+
+  const start = await apiFetch('/session/start', { method: 'POST', body: '{}' })
+  if (!start.ok) {
+    const err = await start.json().catch(() => ({}))
+    throw new Error(err.detail || 'No se pudo iniciar la sesión IPTV')
+  }
+  return start.json()
 }
 
 export async function fetchDiagnostics() {
@@ -168,6 +195,24 @@ export async function fetchSearchStatus() {
   const response = await apiFetch('/catalog/search/status')
   if (!response.ok) return { ready: false, status: 'unknown', counts: {} }
   return response.json()
+}
+
+export async function fetchCatalogRefresh() {
+  const response = await apiFetch('/catalog/refresh')
+  if (!response.ok) {
+    return { ready: false, status: 'unknown', counts: {}, version: null }
+  }
+  return response.json()
+}
+
+export async function triggerCatalogRefresh(force = false) {
+  const query = force ? '?force=1' : ''
+  const response = await apiFetch(`/catalog/refresh${query}`, { method: 'POST', body: '{}' })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok && response.status !== 202) {
+    throw new Error(data.detail || 'No se pudo actualizar el catálogo')
+  }
+  return data
 }
 
 export async function fetchContinueWatching(limit = 12, type = '') {
@@ -252,11 +297,7 @@ export async function buildPlayerSession(item, options = {}) {
     const [playData, epgData] = await Promise.all([
       fetchPlayUrl(`/catalog/live/${itemId}/play`),
       options.withEpg
-        ? fetchCatalog(`/catalog/live/${itemId}/epg?limit=8`).catch(() => ({
-          has_epg: false,
-          listings: [],
-          current: null,
-        }))
+        ? fetchLiveEpg(itemId, 8)
         : Promise.resolve(null),
     ])
     await recordViewHistory({
@@ -271,6 +312,7 @@ export async function buildPlayerSession(item, options = {}) {
       url: playData.url,
       type: playData.type,
       epg: epgData,
+      restored: Boolean(options.restored),
       meta: {
         contentType: 'live',
         itemId,

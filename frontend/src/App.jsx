@@ -2,8 +2,9 @@ import { useEffect } from 'react'
 import { CssBaseline, ThemeProvider } from '@mui/material'
 import { theme } from './theme'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
-import { heartbeat } from './api'
+import { heartbeat, ensureGatewaySession } from './api'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import { CatalogRefreshProvider } from './context/CatalogRefreshContext'
 import { PlaybackProvider } from './context/PlaybackContext'
 import { SearchProvider } from './context/SearchContext'
 import Home from './pages/Home'
@@ -13,6 +14,29 @@ import Movies from './pages/Movies'
 import Series from './pages/Series'
 import SeriesDetail from './pages/SeriesDetail'
 import Settings from './pages/Settings'
+import DeployUpdateDialog from './components/DeployUpdateDialog'
+import useDeployVersionCheck from './hooks/useDeployVersionCheck'
+
+function AppShell() {
+  const { updateAvailable, reloadApp, dismissUpdate } = useDeployVersionCheck()
+
+  return (
+    <>
+      <CatalogRefreshProvider>
+        <PlaybackProvider>
+          <SearchProvider>
+            <AppRoutes />
+          </SearchProvider>
+        </PlaybackProvider>
+      </CatalogRefreshProvider>
+      <DeployUpdateDialog
+        open={updateAvailable}
+        onReload={reloadApp}
+        onDismiss={dismissUpdate}
+      />
+    </>
+  )
+}
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth()
@@ -25,6 +49,9 @@ function AppRoutes() {
 
   useEffect(() => {
     if (!isAuthenticated) return undefined
+
+    ensureGatewaySession().catch(() => {})
+
     const timer = setInterval(() => {
       heartbeat().catch(() => {})
     }, 60000)
@@ -51,11 +78,7 @@ export default function App() {
       <CssBaseline />
       <AuthProvider>
         <BrowserRouter>
-          <PlaybackProvider>
-            <SearchProvider>
-              <AppRoutes />
-            </SearchProvider>
-          </PlaybackProvider>
+          <AppShell />
         </BrowserRouter>
       </AuthProvider>
     </ThemeProvider>

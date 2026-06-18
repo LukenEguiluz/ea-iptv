@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Alert, Box, Typography } from '@mui/material'
 import { fetchCatalog } from '../api'
@@ -10,11 +10,13 @@ import MediaCard from '../components/MediaCard'
 import PageShell from '../components/PageShell'
 import SearchBar from '../components/SearchBar'
 import { usePlayback } from '../context/PlaybackContext'
+import { useCatalogRefresh } from '../context/CatalogRefreshContext'
 import usePaginatedCatalog from '../hooks/usePaginatedCatalog'
 
 export default function Series() {
   const navigate = useNavigate()
   const { setPlayer } = usePlayback()
+  const { refreshGeneration } = useCatalogRefresh()
   const {
     ALL_CATEGORY,
     categories,
@@ -30,18 +32,29 @@ export default function Series() {
     error,
     setError,
     loadMoreRef,
+    reloadCurrentItems,
   } = usePaginatedCatalog('series')
 
-  useEffect(() => {
-    fetchCatalog('/catalog/series/categories')
+  const loadCategories = useCallback(() => {
+    setLoadingCats(true)
+    return fetchCatalog('/catalog/series/categories')
       .then((data) => {
         const cats = Array.isArray(data) ? data : []
         setCategories(cats)
-        setActiveCategory(ALL_CATEGORY)
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoadingCats(false))
-  }, [ALL_CATEGORY, setActiveCategory, setCategories, setError, setLoadingCats])
+  }, [setCategories, setError, setLoadingCats])
+
+  useEffect(() => {
+    loadCategories().then(() => setActiveCategory(ALL_CATEGORY))
+  }, [ALL_CATEGORY, loadCategories, setActiveCategory])
+
+  useEffect(() => {
+    if (refreshGeneration === 0) return
+    loadCategories()
+    reloadCurrentItems()
+  }, [refreshGeneration, loadCategories, reloadCurrentItems])
 
   return (
     <PageShell active="series" title="Series">

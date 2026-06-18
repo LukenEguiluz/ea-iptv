@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo, useState } from 'react'
 import { isLoggedIn, login as apiLogin, logout as apiLogout } from '../api'
+import { clearLiveSession } from '../utils/liveSessionStorage'
 
 const AuthContext = createContext(null)
 
@@ -13,6 +14,7 @@ export function AuthProvider({ children }) {
       setAuthenticated(true)
     },
     logout() {
+      clearLiveSession()
       apiLogout()
       setAuthenticated(false)
     },

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   Box,
   Card,
@@ -18,20 +18,31 @@ import {
   fetchPlayUrl,
   fetchWatchProgress,
 } from '../api'
+import { useCatalogRefresh } from '../context/CatalogRefreshContext'
 import { logPlaybackError } from '../utils/playbackLog'
 
 export default function ContinueWatchingRow({ type = '', limit = 12, onPlay }) {
+  const { refreshGeneration } = useCatalogRefresh()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [removingId, setRemovingId] = useState('')
 
-  useEffect(() => {
+  const loadItems = useCallback(() => {
     setLoading(true)
-    fetchContinueWatching(limit, type)
+    return fetchContinueWatching(limit, type)
       .then((data) => setItems(Array.isArray(data) ? data : []))
       .catch(() => setItems([]))
       .finally(() => setLoading(false))
-  }, [type, limit])
+  }, [limit, type])
+
+  useEffect(() => {
+    loadItems()
+  }, [loadItems])
+
+  useEffect(() => {
+    if (refreshGeneration === 0) return
+    loadItems()
+  }, [refreshGeneration, loadItems])
 
   async function resumeItem(item) {
     try {

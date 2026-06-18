@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   Chip,
+  CircularProgress,
   IconButton,
   Paper,
   Stack,
@@ -19,7 +20,9 @@ import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined'
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'
 import ErrorOutlinedIcon from '@mui/icons-material/ErrorOutlined'
 import PlayCircleOutlinedIcon from '@mui/icons-material/PlayCircleOutlined'
-import { fetchDiagnostics } from '../api'
+import SyncIcon from '@mui/icons-material/Sync'
+import { fetchCatalogRefresh, fetchDiagnostics } from '../api'
+import { useCatalogRefresh } from '../context/CatalogRefreshContext'
 import LoadingState from '../components/LoadingState'
 import PageShell from '../components/PageShell'
 
@@ -34,9 +37,35 @@ const CHECK_LABELS = {
 }
 
 export default function Settings() {
+  const { runCatalogRefresh } = useCatalogRefresh()
   const [report, setReport] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [catalogStatus, setCatalogStatus] = useState(null)
+  const [refreshingCatalog, setRefreshingCatalog] = useState(false)
+  const [catalogError, setCatalogError] = useState('')
+
+  async function loadCatalogStatus() {
+    try {
+      const data = await fetchCatalogRefresh()
+      setCatalogStatus(data)
+    } catch {
+      setCatalogStatus(null)
+    }
+  }
+
+  async function refreshCatalogNow() {
+    setRefreshingCatalog(true)
+    setCatalogError('')
+    try {
+      await runCatalogRefresh()
+      await loadCatalogStatus()
+    } catch (err) {
+      setCatalogError(err.message)
+    } finally {
+      setRefreshingCatalog(false)
+    }
+  }
 
   async function runDiagnostics() {
     setLoading(true)
@@ -56,6 +85,34 @@ export default function Settings() {
       <Typography color="text.secondary" sx={{ mb: 3, maxWidth: 640 }}>
         Comprueba que el servidor Xtream responde correctamente y revisa los enlaces más usados del proveedor.
       </Typography>
+
+      <Paper sx={{ p: { xs: 2, md: 3 }, mb: 3 }}>
+        <Typography variant="h6" sx={{ mb: 1 }}>Catálogo</Typography>
+        <Typography color="text.secondary" sx={{ mb: 2 }}>
+          Sincroniza películas, series y TV en vivo desde el proveedor (`/api/catalog/refresh`).
+        </Typography>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
+          <Button
+            variant="outlined"
+            startIcon={refreshingCatalog ? <CircularProgress size={18} /> : <SyncIcon />}
+            onClick={() => {
+              loadCatalogStatus()
+              refreshCatalogNow()
+            }}
+            disabled={refreshingCatalog}
+          >
+            {refreshingCatalog ? 'Sincronizando…' : 'Actualizar catálogo ahora'}
+          </Button>
+          {catalogStatus ? (
+            <Chip
+              size="small"
+              label={`Estado: ${catalogStatus.status}${catalogStatus.counts?.vod ? ` · ${catalogStatus.counts.vod} películas` : ''}`}
+              color={catalogStatus.status === 'ready' ? 'success' : catalogStatus.status === 'running' ? 'warning' : 'default'}
+            />
+          ) : null}
+        </Stack>
+        {catalogError ? <Alert severity="error" sx={{ mt: 2 }}>{catalogError}</Alert> : null}
+      </Paper>
 
       <Button
         variant="contained"

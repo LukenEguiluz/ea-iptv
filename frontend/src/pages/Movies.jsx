@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 import { Alert, Box, Typography } from '@mui/material'
 import { fetchCatalog } from '../api'
 import CatalogLoadOverlay from '../components/CatalogLoadOverlay'
@@ -9,10 +9,12 @@ import MediaCard from '../components/MediaCard'
 import PageShell from '../components/PageShell'
 import SearchBar from '../components/SearchBar'
 import { usePlayback } from '../context/PlaybackContext'
+import { useCatalogRefresh } from '../context/CatalogRefreshContext'
 import usePaginatedCatalog from '../hooks/usePaginatedCatalog'
 
 export default function Movies() {
   const { playItem, setPlayer } = usePlayback()
+  const { refreshGeneration } = useCatalogRefresh()
   const {
     ALL_CATEGORY,
     categories,
@@ -28,10 +30,12 @@ export default function Movies() {
     error,
     setError,
     loadMoreRef,
+    reloadCurrentItems,
   } = usePaginatedCatalog('vod')
 
-  useEffect(() => {
-    fetchCatalog('/catalog/vod/categories')
+  const loadCategories = useCallback(() => {
+    setLoadingCats(true)
+    return fetchCatalog('/catalog/vod/categories')
       .then((data) => {
         const cats = Array.isArray(data) ? data : []
         setCategories(cats)
@@ -39,6 +43,16 @@ export default function Movies() {
       .catch((err) => setError(err.message))
       .finally(() => setLoadingCats(false))
   }, [setCategories, setError, setLoadingCats])
+
+  useEffect(() => {
+    loadCategories()
+  }, [loadCategories])
+
+  useEffect(() => {
+    if (refreshGeneration === 0) return
+    loadCategories()
+    reloadCurrentItems()
+  }, [refreshGeneration, loadCategories, reloadCurrentItems])
 
   async function openItem(item) {
     try {

@@ -1,6 +1,7 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
+from .catalog_refresh_views import CatalogRefreshView
 from .catalog_views import (
     LiveCategoriesView,
     LiveEpgView,
@@ -51,6 +52,7 @@ urlpatterns = [
     path('catalog/search', CatalogSearchView.as_view(), name='catalog_search'),
     path('catalog/search/status', CatalogSearchStatusView.as_view(), name='catalog_search_status'),
     path('catalog/search/sync', CatalogSearchSyncView.as_view(), name='catalog_search_sync'),
+    path('catalog/refresh', CatalogRefreshView.as_view(), name='catalog_refresh'),
     path('library/continue', ContinueWatchingView.as_view(), name='library_continue'),
     path('library/history', ViewHistoryListView.as_view(), name='library_history'),
     path('library/history/record', ViewHistoryUpsertView.as_view(), name='library_history_record'),

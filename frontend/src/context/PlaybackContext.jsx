@@ -1,15 +1,97 @@
-import { createContext, useCallback, useContext, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { buildPlayerSession, fetchPlayUrlWithAudio } from '../api'
+import { buildPlayerSession, ensureGatewaySession, fetchPlayUrlWithAudio, fetchLiveEpg } from '../api'
 import Player from '../components/Player'
+import { useAuth } from './AuthContext'
 import { logPlaybackError } from '../utils/playbackLog'
+import { clearLiveSession, loadLiveSession, saveLiveSession } from '../utils/liveSessionStorage'
+import { EPG_REFRESH_MS } from '../utils/refreshIntervals'
 
 const PlaybackContext = createContext(null)
 
 export function PlaybackProvider({ children }) {
   const navigate = useNavigate()
+  const { isAuthenticated } = useAuth()
   const [player, setPlayer] = useState(null)
   const [liveChannels, setLiveChannels] = useState([])
+  const restoredLiveRef = useRef(false)
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      restoredLiveRef.current = false
+      setPlayer(null)
+      return
+    }
+
+    if (restoredLiveRef.current || player) return undefined
+
+    const saved = loadLiveSession()
+    if (!saved?.item_id) return undefined
+
+    let cancelled = false
+    restoredLiveRef.current = true
+
+    ensureGatewaySession()
+      .then(() => buildPlayerSession({
+        content_type: 'live',
+        item_id: saved.item_id,
+        name: saved.name,
+        category_name: saved.category_name,
+      }, { withEpg: true, restored: true }))
+      .then((session) => {
+        if (cancelled || session.navigate) return
+        setPlayer(session)
+      })
+      .catch((err) => {
+        logPlaybackError('restoreLiveSession', err, { saved })
+        clearLiveSession()
+        restoredLiveRef.current = false
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isAuthenticated, player])
+
+  useEffect(() => {
+    if (player?.type === 'live' && player.meta?.itemId) {
+      saveLiveSession(player.meta)
+    }
+  }, [player])
+
+  useEffect(() => {
+    if (!player || player.type !== 'live' || !player.meta?.itemId) return undefined
+
+    const itemId = String(player.meta.itemId)
+
+    async function refreshEpg() {
+      try {
+        const epgData = await fetchLiveEpg(itemId, 8)
+        setPlayer((prev) => (
+          prev?.type === 'live' && String(prev.meta?.itemId) === itemId
+            ? { ...prev, epg: epgData }
+            : prev
+        ))
+      } catch {
+        // La guía se reintentará en el próximo ciclo
+      }
+    }
+
+    refreshEpg()
+    const timer = window.setInterval(refreshEpg, EPG_REFRESH_MS)
+
+    function onVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        refreshEpg()
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [player?.type, player?.meta?.itemId])
 
   const playItem = useCallback(async (item) => {
     try {
@@ -33,6 +115,10 @@ export function PlaybackProvider({ children }) {
       if (session.navigate) {
         navigate(session.navigate)
         return
+      }
+
+      if (contentType !== 'live') {
+        clearLiveSession()
       }
 
       setPlayer(session)
@@ -95,6 +181,28 @@ export function PlaybackProvider({ children }) {
     }
   }, [player, liveChannels])
 
+  const reconnectLive = useCallback(async () => {
+    if (!player || player.type !== 'live' || !player.meta?.itemId) return
+
+    const session = await buildPlayerSession({
+      content_type: 'live',
+      item_id: String(player.meta.itemId),
+      name: player.meta.title || player.title,
+      image: player.meta.image || '',
+      category_name: player.meta.categoryName || '',
+    }, { withEpg: true })
+
+    setPlayer(session)
+  }, [player])
+
+  const closePlayer = useCallback(() => {
+    if (player?.type === 'live') {
+      clearLiveSession()
+    }
+    restoredLiveRef.current = false
+    setPlayer(null)
+  }, [player])
+
   const value = {
     player,
     setPlayer,
@@ -116,11 +224,13 @@ export function PlaybackProvider({ children }) {
           durationHint={player.durationHint || 0}
           tracks={player.tracks}
           resumeAt={player.resumeAt || 0}
-          initialMuted={player.type === 'live' ? false : undefined}
+          initialMuted={player.type === 'live' ? Boolean(player.restored) : undefined}
+          restored={Boolean(player.restored)}
           liveChannels={player.type === 'live' ? liveChannels : []}
           onLiveChannelChange={player.type === 'live' ? changeLiveChannel : undefined}
+          onLiveReconnect={player.type === 'live' ? reconnectLive : undefined}
           onUrlChange={player.type !== 'live' ? handleAudioChange : undefined}
-          onClose={() => setPlayer(null)}
+          onClose={closePlayer}
         />
       ) : null}
     </PlaybackContext.Provider>

@@ -226,6 +226,10 @@ class SubtitleProxyView(APIView):
             return HttpResponse(status=404)
 
 
+def _client_decode_requested(request) -> bool:
+    return str(request.query_params.get('client_decode', '')).lower() in ('1', 'true', 'yes')
+
+
 class StreamPlayProxyView(APIView):
     permission_classes = [AllowAny]
 
@@ -244,12 +248,15 @@ class StreamPlayProxyView(APIView):
             if audio_stream_index is not None:
                 audio_stream_index = int(audio_stream_index)
             upstream_url = _resolve_play_upstream(user, payload)
-            if stream_kind == 'live' and shutil.which('ffmpeg') and live_needs_transcode(
-                upstream_url,
-                PROVIDER_USER_AGENT,
+            client_decode = _client_decode_requested(request)
+            if (
+                stream_kind == 'live'
+                and not client_decode
+                and shutil.which('ffmpeg')
+                and live_needs_transcode(upstream_url, PROVIDER_USER_AGENT)
             ):
                 return ffmpeg_live_h264_stream(upstream_url, PROVIDER_USER_AGENT)
-            if stream_kind in ('vod', 'series'):
+            if stream_kind in ('vod', 'series') and not client_decode:
                 processed = _serve_browser_compatible(
                     upstream_url,
                     request,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   Box,
   IconButton,
@@ -7,20 +7,31 @@ import {
 } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
 import { deleteViewHistory, fetchViewHistory } from '../api'
+import { useCatalogRefresh } from '../context/CatalogRefreshContext'
 import MediaCard from './MediaCard'
 
 export default function RecentChannelsRow({ limit = 12, onPlay }) {
+  const { refreshGeneration } = useCatalogRefresh()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [removingId, setRemovingId] = useState('')
 
-  useEffect(() => {
+  const loadItems = useCallback(() => {
     setLoading(true)
-    fetchViewHistory('live', limit)
+    return fetchViewHistory('live', limit)
       .then((data) => setItems(Array.isArray(data) ? data : []))
       .catch(() => setItems([]))
       .finally(() => setLoading(false))
   }, [limit])
+
+  useEffect(() => {
+    loadItems()
+  }, [loadItems])
+
+  useEffect(() => {
+    if (refreshGeneration === 0) return
+    loadItems()
+  }, [refreshGeneration, loadItems])
 
   async function removeItem(item, event) {
     event.preventDefault()

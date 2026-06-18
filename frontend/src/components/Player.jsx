@@ -27,6 +27,15 @@ import VolumeUpIcon from '@mui/icons-material/VolumeUp'
 import Hls from 'hls.js'
 import mpegts from 'mpegts.js'
 import { saveWatchProgress } from '../api'
+import {
+  appendClientDecode,
+  attachAvbridgePlayer,
+  logAvbridge,
+  logAvbridgeError,
+  logAvbridgeWarn,
+  shouldUseAvbridgeForVod,
+  stripClientDecode,
+} from '../utils/avbridgePlayer'
 import { logPlaybackError, logPlaybackWarn } from '../utils/playbackLog'
 
 function formatTime(seconds) {
@@ -52,7 +61,12 @@ const LIVE_STATUS_LABELS = {
   live: 'En vivo',
   buffering: 'Buffering…',
   stalled: 'Transmisión detenida',
+  reconnecting: 'Reconectando…',
 }
+
+const LIVE_RECONNECT_BASE_MS = 2500
+const LIVE_RECONNECT_MAX_MS = 30000
+const LIVE_WAITING_RECONNECT_MS = 12000
 
 const READY_STATE_PERCENT = [8, 28, 52, 78, 100]
 const FULLSCREEN_UI_HIDE_MS = 3000
@@ -83,8 +97,10 @@ export default function Player({
   durationHint = 0,
   tracks = null,
   initialMuted,
+  restored = false,
   liveChannels = [],
   onLiveChannelChange,
+  onLiveReconnect,
   onMutedChange,
   onUrlChange,
   onClose,
@@ -94,6 +110,10 @@ export default function Player({
   const loadStartedRef = useRef(Date.now())
   const lastProgressRef = useRef(0)
   const stallTicksRef = useRef(0)
+  const reconnectAttemptsRef = useRef(0)
+  const reconnectTimerRef = useRef(null)
+  const waitingReconnectTimerRef = useRef(null)
+  const onLiveReconnectRef = useRef(onLiveReconnect)
   const lastSavedRef = useRef(0)
   const resumeAppliedRef = useRef(false)
   const [error, setError] = useState('')
@@ -190,6 +210,97 @@ export default function Player({
     }
   }, [isFullscreen, scheduleUiHide])
 
+  const liveStatusRef = useRef(liveStatus)
+  useEffect(() => {
+    liveStatusRef.current = liveStatus
+  }, [liveStatus])
+
+  useEffect(() => {
+    onLiveReconnectRef.current = onLiveReconnect
+  }, [onLiveReconnect])
+
+  const clearReconnectTimer = useCallback(() => {
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
+  }, [])
+
+  const clearWaitingReconnectTimer = useCallback(() => {
+    if (waitingReconnectTimerRef.current) {
+      window.clearTimeout(waitingReconnectTimerRef.current)
+      waitingReconnectTimerRef.current = null
+    }
+  }, [])
+
+  const resetLiveRecovery = useCallback(() => {
+    reconnectAttemptsRef.current = 0
+    clearReconnectTimer()
+    clearWaitingReconnectTimer()
+  }, [clearReconnectTimer, clearWaitingReconnectTimer])
+
+  const scheduleLiveReconnectRef = useRef(() => {})
+
+  const scheduleLiveReconnect = useCallback((reason) => {
+    if (!isLive || !onLiveReconnectRef.current) return
+    if (reconnectTimerRef.current) return
+
+    logPlaybackWarn('player.liveReconnect', reason, {
+      title,
+      url,
+      attempt: reconnectAttemptsRef.current + 1,
+    })
+
+    setLiveStatus('reconnecting')
+    setError('')
+
+    const attempt = reconnectAttemptsRef.current
+    const delay = Math.min(
+      LIVE_RECONNECT_MAX_MS,
+      Math.round(LIVE_RECONNECT_BASE_MS * (1.4 ** attempt)),
+    )
+
+    reconnectTimerRef.current = window.setTimeout(async () => {
+      reconnectTimerRef.current = null
+      reconnectAttemptsRef.current += 1
+      try {
+        await onLiveReconnectRef.current()
+        reconnectAttemptsRef.current = 0
+      } catch (err) {
+        logPlaybackWarn('player.liveReconnect', 'Fallo al reconectar', {
+          title,
+          error: err?.message || String(err),
+          attempt: reconnectAttemptsRef.current,
+        })
+        scheduleLiveReconnectRef.current('reintento tras fallo')
+      }
+    }, delay)
+  }, [isLive, title, url])
+
+  useEffect(() => {
+    scheduleLiveReconnectRef.current = scheduleLiveReconnect
+  }, [scheduleLiveReconnect])
+
+  useEffect(() => {
+    if (!isLive) return undefined
+
+    function onVisibilityChange() {
+      if (document.visibilityState !== 'visible') return
+      const status = liveStatusRef.current
+      if (status === 'stalled' || status === 'reconnecting' || status === 'buffering') {
+        scheduleLiveReconnectRef.current('pestaña visible de nuevo')
+      }
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+  }, [isLive])
+
+  useEffect(() => () => {
+    clearReconnectTimer()
+    clearWaitingReconnectTimer()
+  }, [clearReconnectTimer, clearWaitingReconnectTimer])
+
   useEffect(() => {
     if (!canZap) return undefined
 
@@ -264,10 +375,11 @@ export default function Player({
     const playbackUrl = url.startsWith('/')
       ? `${window.location.origin}${url}`
       : url
-    const needsConversion = isVodLike && playbackUrl.includes('/api/proxy/play')
+    const needsConversion = isVodLike && playbackUrl.includes('/api/proxy/play') && !shouldUseAvbridgeForVod(playbackUrl, isVodLike)
+    const useAvbridgeVodPreview = shouldUseAvbridgeForVod(playbackUrl, isVodLike)
 
     loadStartedRef.current = Date.now()
-    setLoadPhase(needsConversion ? 'converting' : 'loading')
+    setLoadPhase(useAvbridgeVodPreview ? 'avbridge' : (needsConversion ? 'converting' : 'loading'))
     setPrepPercent(0)
     setBufferPercent(0)
     setIsWaiting(false)
@@ -327,6 +439,34 @@ export default function Player({
       })
     }
 
+    const tryLivePlayback = async (playerInstance) => {
+      const startMuted = typeof initialMuted === 'boolean' ? initialMuted : false
+      const attempt = async (mutedPlayback) => {
+        video.muted = mutedPlayback
+        setMuted(mutedPlayback)
+        if (playerInstance?.play) {
+          await playerInstance.play()
+        } else {
+          await video.play()
+        }
+      }
+
+      try {
+        await attempt(startMuted)
+      } catch (err) {
+        if (!startMuted) {
+          try {
+            await attempt(true)
+            return
+          } catch (mutedErr) {
+            logPlayFailure('mpegts+video-muted', mutedErr || err)
+            return
+          }
+        }
+        logPlayFailure('mpegts+video', err)
+      }
+    }
+
     setError('')
     setPlaying(false)
     setCurrent(0)
@@ -335,7 +475,9 @@ export default function Player({
     setPrepPercent(0)
     setBufferPercent(0)
     setIsWaiting(false)
-    setLoadPhase(isLive ? 'connecting' : (url.includes('/api/proxy/play') ? 'converting' : 'loading'))
+    resetLiveRecovery()
+    const useAvbridgeVod = shouldUseAvbridgeForVod(playbackUrl, isVodLike)
+    setLoadPhase(isLive ? 'connecting' : (useAvbridgeVod ? 'avbridge' : (url.includes('/api/proxy/play') ? 'converting' : 'loading')))
     if (isLive) setLiveStatus('connecting')
     lastProgressRef.current = 0
     stallTicksRef.current = 0
@@ -347,7 +489,88 @@ export default function Player({
 
     let hls
     let mpegtsPlayer
+    let avbridgeHandle
+    let avbridgeStarting = false
     let stallInterval
+
+    const destroyMpegts = () => {
+      if (!mpegtsPlayer) return
+      mpegtsPlayer.pause()
+      mpegtsPlayer.unload()
+      mpegtsPlayer.detachMediaElement()
+      mpegtsPlayer.destroy()
+      mpegtsPlayer = null
+    }
+
+    const startServerTranscodePlayback = (reason) => {
+      const serverUrl = stripClientDecode(playbackUrl)
+      logAvbridgeWarn('server-fallback', `Reintentando con conversión en servidor (${reason})`, { serverUrl })
+      setLoadPhase('converting')
+      setError('')
+      video.pause()
+      video.removeAttribute('src')
+      video.setAttribute('playsinline', '')
+      video.setAttribute('webkit-playsinline', 'true')
+      video.preload = 'auto'
+      video.src = serverUrl
+      video.volume = 1
+      video.muted = false
+      video.load()
+      video.play().catch((err) => logPlayFailure('server-transcode', err))
+    }
+
+    const startAvbridgePlayback = async (reason, { live = false } = {}) => {
+      if (avbridgeHandle || avbridgeStarting) return
+      avbridgeStarting = true
+      const avbridgeUrl = appendClientDecode(playbackUrl)
+      logAvbridge('fallback', `Activando avbridge (${reason})`, {
+        title,
+        type,
+        url: avbridgeUrl,
+        live,
+      })
+      setLoadPhase('avbridge')
+      setError('')
+      destroyMpegts()
+      if (hls) {
+        hls.destroy()
+        hls = null
+      }
+      video.pause()
+      video.removeAttribute('src')
+      video.load()
+      try {
+        avbridgeHandle = await attachAvbridgePlayer(video, avbridgeUrl, {
+          resumeAt: live ? 0 : resumeAt,
+          initialMuted: live
+            ? (typeof initialMuted === 'boolean' ? initialMuted : true)
+            : false,
+          context: { title, type, reason, live },
+        })
+        setPrepPercent(100)
+        setLoadPhase('playing')
+        if (live) {
+          setLiveStatus('live')
+          setSwitching(false)
+          reconnectAttemptsRef.current = 0
+        }
+      } catch (err) {
+        logAvbridgeError('fallback', 'avbridge no pudo reproducir', {
+          reason,
+          error: err?.message || String(err),
+          title,
+          type,
+        })
+        if (live) {
+          setLiveStatus('stalled')
+          scheduleLiveReconnectRef.current(`avbridge falló: ${err?.message || 'error'}`)
+        } else {
+          startServerTranscodePlayback(`avbridge: ${err?.message || reason}`)
+        }
+      } finally {
+        avbridgeStarting = false
+      }
+    }
 
     const liveSupported = mpegts.getFeatureList().mseLivePlayback
 
@@ -376,21 +599,22 @@ export default function Player({
       mpegtsPlayer.on(mpegts.Events.MEDIA_INFO, () => {
         setLiveStatus('live')
         setSwitching(false)
-        mpegtsPlayer.play().catch((err) => {
-          video.play().catch((playErr) => logPlayFailure('mpegts+video', playErr || err))
-        })
+        reconnectAttemptsRef.current = 0
+        tryLivePlayback(mpegtsPlayer)
       })
       mpegtsPlayer.on(mpegts.Events.ERROR, (_, data) => {
         const detail = data?.detail || data?.type || 'error'
-        setLiveStatus('stalled')
         if (String(detail).toLowerCase().includes('codec') || String(detail).includes('MEDIA')) {
-          reportError(
-            'Este canal usa un formato de video no compatible con el navegador (p. ej. HEVC/4K). Prueba otro canal SD/HD.',
-            { engine: 'mpegts', mpegtsError: data },
-          )
-        } else {
-          reportError(`No se pudo reproducir el canal en vivo (${detail}).`, { engine: 'mpegts', mpegtsError: data })
+          logAvbridgeWarn('mpegts-codec', 'Codec no compatible en mpegts, probando avbridge', {
+            title,
+            mpegtsError: data,
+          })
+          startAvbridgePlayback('mpegts codec error', { live: true })
+          return
         }
+        setLiveStatus('stalled')
+        logPlaybackWarn('player.mpegts', 'Error en transmisión en vivo', { title, mpegtsError: data })
+        scheduleLiveReconnectRef.current(`error mpegts: ${detail}`)
       })
     } else if (isLive && Hls.isSupported()) {
       hls = new Hls({ enableWorker: true, lowLatencyMode: true })
@@ -406,16 +630,8 @@ export default function Player({
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.fatal) {
           setLiveStatus('stalled')
-          reportError('No se pudo reproducir el canal en vivo.', {
-            engine: 'hls',
-            hlsError: {
-              type: data.type,
-              details: data.details,
-              fatal: data.fatal,
-              reason: data.reason,
-              response: data.response,
-            },
-          })
+          logPlaybackWarn('player.hls', 'Error fatal HLS en vivo', { title, hlsError: data })
+          scheduleLiveReconnectRef.current(`error hls fatal: ${data.details || data.type}`)
         } else {
           logPlaybackWarn('player.hls', 'Error HLS no fatal', { title, url, type, hlsError: data })
         }
@@ -426,6 +642,11 @@ export default function Player({
       video.muted = startMuted
       video.volume = 1
       video.play().catch((err) => logPlayFailure('native-hls', err))
+    } else if (useAvbridgeVod) {
+      logAvbridge('vod', 'VOD/serie con avbridge (sin conversión en servidor)', {
+        playbackUrl: appendClientDecode(playbackUrl),
+      })
+      startAvbridgePlayback('vod primary', { live: false })
     } else {
       video.setAttribute('playsinline', '')
       video.setAttribute('webkit-playsinline', 'true')
@@ -440,22 +661,34 @@ export default function Player({
     const onPlay = () => {
       setPlaying(true)
       setIsWaiting(false)
+      clearWaitingReconnectTimer()
       setPrepPercent(100)
       setLoadPhase('playing')
-      if (isLive) setLiveStatus('live')
+      if (isLive) {
+        setLiveStatus('live')
+        reconnectAttemptsRef.current = 0
+      }
     }
     const onPause = () => setPlaying(false)
     const onWaiting = () => {
       setIsWaiting(true)
-      if (isLive) setLiveStatus('buffering')
+      if (isLive) {
+        setLiveStatus('buffering')
+        clearWaitingReconnectTimer()
+        waitingReconnectTimerRef.current = window.setTimeout(() => {
+          scheduleLiveReconnectRef.current('buffering prolongado')
+        }, LIVE_WAITING_RECONNECT_MS)
+      }
     }
     const onPlaying = () => {
       setIsWaiting(false)
+      clearWaitingReconnectTimer()
       setPrepPercent(100)
       setLoadPhase('playing')
       if (isLive) {
         setLiveStatus('live')
         stallTicksRef.current = 0
+        reconnectAttemptsRef.current = 0
       }
     }
     const onCanPlay = () => {
@@ -514,6 +747,28 @@ export default function Player({
     const onMediaError = () => {
       const mediaError = video.error
       const code = mediaError?.code
+      if (isLive) {
+        setLiveStatus('stalled')
+        logPlaybackWarn('player.video', 'Error de video en vivo', {
+          title,
+          mediaErrorCode: code,
+          mediaErrorMessage: mediaError?.message,
+        })
+        if (!avbridgeHandle && !avbridgeStarting) {
+          startAvbridgePlayback(`error video live: ${code || 'unknown'}`, { live: true })
+        } else {
+          scheduleLiveReconnectRef.current(`error video: ${code || 'unknown'}`)
+        }
+        return
+      }
+      if (!avbridgeHandle && !avbridgeStarting && isVodLike && playbackUrl.includes('/api/proxy/play')) {
+        logAvbridgeWarn('native-fallback', 'HTML5 falló, probando avbridge', {
+          mediaErrorCode: code,
+          mediaErrorMessage: mediaError?.message,
+        })
+        startAvbridgePlayback(`html5 error ${code || 'unknown'}`, { live: false })
+        return
+      }
       let message = 'No se pudo reproducir el video.'
       if (type === 'series' || type === 'vod') {
         if (code === 4) {
@@ -540,12 +795,17 @@ export default function Player({
         const progress = videoEl.currentTime
         if (Math.abs(progress - lastProgressRef.current) < 0.01) {
           stallTicksRef.current += 1
-          if (stallTicksRef.current >= 2) {
+          if (stallTicksRef.current >= 3) {
+            setLiveStatus('stalled')
+            scheduleLiveReconnectRef.current('transmisión detenida')
+          } else if (stallTicksRef.current >= 2) {
             setLiveStatus(videoEl.readyState < 3 ? 'buffering' : 'stalled')
           }
         } else {
           stallTicksRef.current = 0
-          setLiveStatus('live')
+          if (liveStatusRef.current !== 'reconnecting') {
+            setLiveStatus('live')
+          }
           lastProgressRef.current = progress
         }
       }, 4000)
@@ -566,6 +826,8 @@ export default function Player({
 
     return () => {
       if (stallInterval) window.clearInterval(stallInterval)
+      clearWaitingReconnectTimer()
+      clearReconnectTimer()
       if (meta?.itemId && isVodLike && video.currentTime > 0) {
         const totalDuration = (video.duration > 0 && Number.isFinite(video.duration))
           ? video.duration
@@ -582,12 +844,12 @@ export default function Player({
         })
       }
       if (mpegtsPlayer) {
-        mpegtsPlayer.pause()
-        mpegtsPlayer.unload()
-        mpegtsPlayer.detachMediaElement()
-        mpegtsPlayer.destroy()
+        destroyMpegts()
       }
       if (hls) hls.destroy()
+      if (avbridgeHandle) {
+        avbridgeHandle.destroy().catch(() => {})
+      }
       video.removeEventListener('play', onPlay)
       video.removeEventListener('pause', onPause)
       video.removeEventListener('waiting', onWaiting)
@@ -604,7 +866,7 @@ export default function Player({
       video.removeAttribute('src')
       video.load()
     }
-  }, [url, type, isLive, isVodLike, meta, resumeAt, title, initialMuted, durationHint])
+  }, [url, type, isLive, isVodLike, meta, resumeAt, title, initialMuted, restored, durationHint, resetLiveRecovery, clearReconnectTimer, clearWaitingReconnectTimer])
 
   useEffect(() => {
     if (!isLive && durationHint > 0) {
@@ -738,6 +1000,7 @@ export default function Player({
   const upcomingPrograms = (epg?.listings || []).filter((item) => !item.now).slice(0, 4)
 
   const loadPhaseLabel = {
+    avbridge: 'Decodificando en el navegador (avbridge)',
     converting: 'Convirtiendo video',
     loading: 'Cargando video',
     connecting: 'Conectando canal',
@@ -746,7 +1009,9 @@ export default function Player({
     idle: 'Preparando',
   }[loadPhase] || 'Cargando'
 
-  const showLoadOverlay = prepPercent < 100 || isWaiting || (isLive && (liveStatus === 'connecting' || liveStatus === 'buffering'))
+  const showLoadOverlay = prepPercent < 100 || isWaiting || liveStatus === 'reconnecting'
+    || loadPhase === 'avbridge'
+    || (isLive && (liveStatus === 'connecting' || liveStatus === 'buffering'))
   const displayPrepPercent = isLive && liveStatus === 'buffering'
     ? Math.max(prepPercent, 55)
     : prepPercent
@@ -786,7 +1051,9 @@ export default function Player({
       ) : null}
       {isLive && muted ? (
         <Alert severity="info" className="player-chrome" sx={{ mx: 2, mb: 1 }} icon={false}>
-          El navegador bloqueó el audio automático. Pulsa reproducir o el icono de volumen.
+          {restored
+            ? 'Canal restaurado tras recargar. Pulsa reproducir o el icono de volumen para activar el audio.'
+            : 'El navegador bloqueó el audio automático. Pulsa reproducir o el icono de volumen.'}
         </Alert>
       ) : null}
       <div
@@ -866,14 +1133,18 @@ export default function Player({
             >
               <CircularProgress size={40} sx={{ mb: 2 }} />
               <Typography variant="subtitle1" fontWeight={700}>
-                {isWaiting ? 'Buffering…' : loadPhaseLabel}
+                {liveStatus === 'reconnecting'
+                  ? 'Reconectando canal…'
+                  : (isWaiting ? 'Buffering…' : loadPhaseLabel)}
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 2 }}>
-                {loadPhase === 'converting'
-                  ? 'Adaptando formato para tu dispositivo'
-                  : isLive
-                    ? LIVE_STATUS_LABELS[liveStatus] || 'Conectando…'
-                    : 'Descargando datos del servidor'}
+                {liveStatus === 'reconnecting'
+                  ? 'Recuperando la señal automáticamente'
+                  : (loadPhase === 'converting'
+                    ? 'Adaptando formato para tu dispositivo'
+                    : isLive
+                      ? LIVE_STATUS_LABELS[liveStatus] || 'Conectando…'
+                      : 'Descargando datos del servidor')}
               </Typography>
               <LinearProgress
                 variant="determinate"

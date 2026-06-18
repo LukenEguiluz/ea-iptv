@@ -15,6 +15,7 @@ import LoadingState from '../components/LoadingState'
 import PageShell from '../components/PageShell'
 import RecentChannelsRow from '../components/RecentChannelsRow'
 import { usePlayback } from '../context/PlaybackContext'
+import { useCatalogRefresh } from '../context/CatalogRefreshContext'
 
 async function loadSection(path) {
   const data = await fetchCatalog(path)
@@ -30,13 +31,17 @@ async function loadFirstCategoryItems(categoriesPath, streamsPathBuilder) {
 
 export default function Home() {
   const { playItem, setPlayer } = usePlayback()
+  const { refreshGeneration } = useCatalogRefresh()
   const [live, setLive] = useState([])
   const [movies, setMovies] = useState([])
   const [series, setSeries] = useState([])
   const [loading, setLoading] = useState({ live: true, movies: true, series: true })
   const [errors, setErrors] = useState({})
 
-  useEffect(() => {
+  const loadHomeContent = useCallback(() => {
+    setLoading({ live: true, movies: true, series: true })
+    setErrors({})
+
     loadFirstCategoryItems(
       '/catalog/live/categories',
       (id) => `/catalog/live/streams?limit=24&category_id=${id}`,
@@ -61,6 +66,15 @@ export default function Home() {
       .catch((err) => setErrors((e) => ({ ...e, series: err.message })))
       .finally(() => setLoading((s) => ({ ...s, series: false })))
   }, [])
+
+  useEffect(() => {
+    loadHomeContent()
+  }, [loadHomeContent])
+
+  useEffect(() => {
+    if (refreshGeneration === 0) return
+    loadHomeContent()
+  }, [refreshGeneration, loadHomeContent])
 
   const playLive = useCallback(async (item) => {
     await playItem({
