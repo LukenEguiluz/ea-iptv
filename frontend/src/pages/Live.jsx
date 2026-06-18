@@ -1,9 +1,11 @@
 import { useEffect } from 'react'
+import { Alert, Box, Typography } from '@mui/material'
 import { fetchCatalog } from '../api'
 import CatalogLoadOverlay from '../components/CatalogLoadOverlay'
+import CategoryChips from '../components/CategoryChips'
 import LoadingState from '../components/LoadingState'
 import MediaCard from '../components/MediaCard'
-import Navbar from '../components/Navbar'
+import PageShell from '../components/PageShell'
 import SearchBar from '../components/SearchBar'
 import { usePlayback } from '../context/PlaybackContext'
 import usePaginatedCatalog from '../hooks/usePaginatedCatalog'
@@ -57,66 +59,58 @@ export default function Live() {
   }
 
   return (
-    <div className="app-shell">
-      <Navbar active="tv" />
+    <PageShell active="tv" title="TV en vivo">
       <CatalogLoadOverlay
         show={loading && streams.length === 0}
         title="Cargando canales"
         loaded={streams.length}
         total={total}
       />
-      <main className="page-content page-content--padded">
-        <h1 className="page-title">TV en vivo</h1>
-        <SearchBar
-          type="live"
-          placeholder="Buscar canales por nombre…"
-          emptyLabel="No se encontraron canales"
-          onSelect={openItem}
-        />
-        {error ? <div className="page-error">{error}</div> : null}
-        {loadingCats ? <LoadingState message="Cargando categorías…" /> : (
-          <div className="category-tabs">
-            <button
-              type="button"
-              className={activeCategory === ALL_CATEGORY ? 'active' : ''}
-              onClick={() => setActiveCategory(ALL_CATEGORY)}
-            >
-              Todas
-            </button>
-            {categories.map((cat) => (
-              <button
-                key={cat.category_id}
-                type="button"
-                className={activeCategory === String(cat.category_id) ? 'active' : ''}
-                onClick={() => setActiveCategory(String(cat.category_id))}
-              >
-                {cat.category_name}
-              </button>
-            ))}
-          </div>
-        )}
-        {!loading && total > 0 ? (
-          <p className="catalog-count">
-            Mostrando {streams.length.toLocaleString()} de {total.toLocaleString()} canales
-          </p>
+      <SearchBar
+        type="live"
+        placeholder="Buscar canales por nombre…"
+        emptyLabel="No se encontraron canales"
+        onSelect={openItem}
+      />
+      {error ? <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert> : null}
+      <CategoryChips
+        categories={categories}
+        activeCategory={activeCategory}
+        allValue={ALL_CATEGORY}
+        onChange={setActiveCategory}
+        loading={loadingCats}
+        searchPlaceholder="Buscar categoría de canales…"
+      />
+      {!loading && total > 0 ? (
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Mostrando {streams.length.toLocaleString()} de {total.toLocaleString()} canales
+        </Typography>
+      ) : null}
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: {
+            xs: 'repeat(auto-fill, minmax(150px, 1fr))',
+            md: 'repeat(auto-fill, minmax(190px, 1fr))',
+          },
+          gap: 2,
+        }}
+      >
+        {streams.length === 0 && !loading ? (
+          <Typography color="text.secondary">Sin canales en esta categoría.</Typography>
         ) : null}
-        <div className="media-grid">
-          {streams.length === 0 && !loading ? (
-            <p className="page-empty-inline">Sin canales en esta categoría.</p>
-          ) : null}
-          {streams.map((item) => (
-            <MediaCard
-              key={`${item.stream_id}-${item.category_id || ''}`}
-              title={item.name}
-              image={item.stream_icon}
-              subtitle={item.category_name}
-              onClick={() => openItem(item)}
-            />
-          ))}
-        </div>
-        {loadingMore ? <LoadingState message="Cargando más canales…" compact /> : null}
-        {streams.length < total ? <div ref={loadMoreRef} className="catalog-scroll-sentinel" /> : null}
-      </main>
-    </div>
+        {streams.map((item) => (
+          <MediaCard
+            key={`${item.stream_id}-${item.category_id || ''}`}
+            title={item.name}
+            image={item.stream_icon}
+            subtitle={item.category_name}
+            onClick={() => openItem(item)}
+          />
+        ))}
+      </Box>
+      {loadingMore ? <LoadingState message="Cargando más canales…" compact /> : null}
+      {streams.length < total ? <div ref={loadMoreRef} className="catalog-scroll-sentinel" /> : null}
+    </PageShell>
   )
 }

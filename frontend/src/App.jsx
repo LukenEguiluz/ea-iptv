@@ -1,4 +1,6 @@
 import { useEffect } from 'react'
+import { CssBaseline, ThemeProvider } from '@mui/material'
+import { theme } from './theme'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { heartbeat } from './api'
 import { AuthProvider, useAuth } from './context/AuthContext'
@@ -45,14 +47,17 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <PlaybackProvider>
-          <SearchProvider>
-            <AppRoutes />
-          </SearchProvider>
-        </PlaybackProvider>
-      </BrowserRouter>
-    </AuthProvider>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <AuthProvider>
+        <BrowserRouter>
+          <PlaybackProvider>
+            <SearchProvider>
+              <AppRoutes />
+            </SearchProvider>
+          </PlaybackProvider>
+        </BrowserRouter>
+      </AuthProvider>
+    </ThemeProvider>
   )
 }

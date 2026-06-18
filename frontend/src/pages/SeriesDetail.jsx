@@ -1,14 +1,30 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardMedia,
+  Chip,
+  List,
+  ListItemButton,
+  ListItemText,
+  Paper,
+  Typography,
+} from '@mui/material'
+import ArrowBackIcon from '@mui/icons-material/ArrowBack'
+import PlayArrowIcon from '@mui/icons-material/PlayArrow'
+import {
   fetchCatalog,
   fetchPlayUrl,
   fetchWatchProgress,
   recordViewHistory,
 } from '../api'
 import ContinueWatchingRow from '../components/ContinueWatchingRow'
-import Navbar from '../components/Navbar'
+import PageShell from '../components/PageShell'
 import { usePlayback } from '../context/PlaybackContext'
+import { logPlaybackError } from '../utils/playbackLog'
 
 export default function SeriesDetail() {
   const { seriesId } = useParams()
@@ -58,50 +74,100 @@ export default function SeriesDetail() {
       })
       setError('')
     } catch (err) {
+      logPlaybackError('seriesEpisode', err, { seriesId, episodeId: episode.id, episodeTitle: episode.title })
       setError(err.message)
     }
   }
 
   const seasons = info?.episodes ? Object.entries(info.episodes) : []
+  const cover = info?.info?.cover || info?.info?.cover_big
 
   return (
-    <div className="app-shell">
-      <Navbar active="series" />
-      <main className="page-content page-content--padded">
-        <Link to="/series" className="back-link">← Volver a series</Link>
-        <ContinueWatchingRow type="series" onPlay={setPlayer} />
-        {error ? <div className="page-error">{error}</div> : null}
-        {info?.info ? (
-          <section className="series-hero">
-            <img src={info.info.cover || info.info.cover_big} alt={info.info.name} />
-            <div>
-              <h1>{info.info.name}</h1>
-              <p>{info.info.plot || info.info.genre}</p>
-            </div>
-          </section>
-        ) : null}
-        {seasons.map(([season, episodes]) => (
-          <section key={season} className="season-block">
-            <h2>Temporada {season}</h2>
-            <div className="episode-list">
-              {episodes.map((episode) => (
-                <button
+    <PageShell active="series">
+      <Button
+        component={Link}
+        to="/series"
+        startIcon={<ArrowBackIcon />}
+        sx={{ mb: 2 }}
+      >
+        Volver a series
+      </Button>
+      <ContinueWatchingRow type="series" onPlay={setPlayer} />
+      {error ? <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert> : null}
+      {info?.info ? (
+        <Paper
+          sx={{
+            display: 'flex',
+            flexDirection: { xs: 'column', md: 'row' },
+            gap: 3,
+            p: { xs: 2, md: 3 },
+            mb: 3,
+          }}
+        >
+          {cover ? (
+            <Card sx={{ width: { xs: '100%', md: 220 }, flexShrink: 0 }}>
+              <CardMedia
+                component="img"
+                image={cover}
+                alt={info.info.name}
+                sx={{ aspectRatio: '2 / 3', objectFit: 'cover' }}
+              />
+            </Card>
+          ) : null}
+          <Box>
+            <Typography variant="h4" component="h1" sx={{ mb: 1 }}>
+              {info.info.name}
+            </Typography>
+            {info.info.genre ? (
+              <Chip label={info.info.genre} size="small" sx={{ mb: 1.5 }} />
+            ) : null}
+            <Typography color="text.secondary">
+              {info.info.plot || 'Sin descripción disponible.'}
+            </Typography>
+          </Box>
+        </Paper>
+      ) : null}
+      {seasons.map(([season, episodes]) => (
+        <Box key={season} sx={{ mb: 3 }}>
+          <Typography variant="h5" sx={{ mb: 1.5 }}>
+            Temporada {season}
+          </Typography>
+          <Paper variant="outlined">
+            <List disablePadding>
+              {episodes.map((episode, index) => (
+                <ListItemButton
                   key={episode.id}
-                  type="button"
-                  className="episode-card"
+                  divider={index < episodes.length - 1}
                   onClick={() => playEpisode(episode)}
+                  sx={{ alignItems: 'flex-start', py: 1.5 }}
                 >
-                  <span className="episode-number">E{episode.episode_num}</span>
-                  <div>
-                    <strong>{episode.title}</strong>
-                    {episode.info?.plot ? <p>{episode.info.plot}</p> : null}
-                  </div>
-                </button>
+                  <Chip
+                    label={`E${episode.episode_num}`}
+                    size="small"
+                    color="primary"
+                    variant="outlined"
+                    sx={{ mr: 2, mt: 0.25, minWidth: 48 }}
+                  />
+                  <ListItemText
+                    primary={episode.title}
+                    secondary={episode.info?.plot}
+                    primaryTypographyProps={{ fontWeight: 600 }}
+                    secondaryTypographyProps={{
+                      sx: {
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                      },
+                    }}
+                  />
+                  <PlayArrowIcon color="primary" sx={{ ml: 1, mt: 0.5 }} />
+                </ListItemButton>
               ))}
-            </div>
-          </section>
-        ))}
-      </main>
-    </div>
+            </List>
+          </Paper>
+        </Box>
+      ))}
+    </PageShell>
   )
 }

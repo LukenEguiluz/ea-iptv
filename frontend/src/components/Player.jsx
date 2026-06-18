@@ -1,7 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  Alert,
+  Box,
+  Chip,
+  CircularProgress,
+  FormControl,
+  IconButton,
+  LinearProgress,
+  MenuItem,
+  Paper,
+  Select,
+  Slider,
+  Stack,
+  Typography,
+} from '@mui/material'
+import ArrowBackIcon from '@mui/icons-material/ArrowBack'
+import FullscreenExitIcon from '@mui/icons-material/FullscreenExit'
+import FullscreenIcon from '@mui/icons-material/Fullscreen'
+import MenuIcon from '@mui/icons-material/Menu'
+import PauseIcon from '@mui/icons-material/Pause'
+import PlayArrowIcon from '@mui/icons-material/PlayArrow'
+import RemoveIcon from '@mui/icons-material/Remove'
+import AddIcon from '@mui/icons-material/Add'
+import VolumeOffIcon from '@mui/icons-material/VolumeOff'
+import VolumeUpIcon from '@mui/icons-material/VolumeUp'
 import Hls from 'hls.js'
 import mpegts from 'mpegts.js'
 import { saveWatchProgress } from '../api'
+import { logPlaybackError, logPlaybackWarn } from '../utils/playbackLog'
 
 function formatTime(seconds) {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00'
@@ -29,6 +55,7 @@ const LIVE_STATUS_LABELS = {
 }
 
 const READY_STATE_PERCENT = [8, 28, 52, 78, 100]
+const FULLSCREEN_UI_HIDE_MS = 3000
 
 function isIosDevice() {
   return /iPad|iPhone|iPod/i.test(navigator.userAgent)
@@ -77,7 +104,7 @@ export default function Player({
   const [volume, setVolume] = useState(1)
   const [muted, setMuted] = useState(() => {
     if (typeof initialMuted === 'boolean') return initialMuted
-    return type === 'live'
+    return false
   })
   const [liveStatus, setLiveStatus] = useState('connecting')
   const [showGuide, setShowGuide] = useState(false)
@@ -86,6 +113,8 @@ export default function Player({
   const [selectedAudio, setSelectedAudio] = useState('')
   const [selectedSubtitle, setSelectedSubtitle] = useState('-1')
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [uiVisible, setUiVisible] = useState(true)
+  const uiHideTimerRef = useRef(null)
   const [loadPhase, setLoadPhase] = useState('idle')
   const [prepPercent, setPrepPercent] = useState(0)
   const [bufferPercent, setBufferPercent] = useState(0)
@@ -140,6 +169,27 @@ export default function Player({
     setSelectedSubtitle('-1')
   }, [url, audioTracks])
 
+  const clearUiHideTimer = useCallback(() => {
+    if (uiHideTimerRef.current) {
+      window.clearTimeout(uiHideTimerRef.current)
+      uiHideTimerRef.current = null
+    }
+  }, [])
+
+  const scheduleUiHide = useCallback(() => {
+    clearUiHideTimer()
+    uiHideTimerRef.current = window.setTimeout(() => {
+      setUiVisible(false)
+    }, FULLSCREEN_UI_HIDE_MS)
+  }, [clearUiHideTimer])
+
+  const revealUi = useCallback(() => {
+    setUiVisible(true)
+    if (isFullscreen) {
+      scheduleUiHide()
+    }
+  }, [isFullscreen, scheduleUiHide])
+
   useEffect(() => {
     if (!canZap) return undefined
 
@@ -149,12 +199,15 @@ export default function Player({
 
       if (event.key === 'ArrowUp' || event.key === 'PageUp' || event.key === 'ChannelUp') {
         event.preventDefault()
+        revealUi()
         zapChannel('prev')
       } else if (event.key === 'ArrowDown' || event.key === 'PageDown' || event.key === 'ChannelDown') {
         event.preventDefault()
+        revealUi()
         zapChannel('next')
       } else if (event.key === 'g' || event.key === 'G' || event.key === 'Guide') {
         event.preventDefault()
+        revealUi()
         setShowGuide((open) => !open)
       } else if (event.key === 'Escape' && showGuide) {
         setShowGuide(false)
@@ -163,13 +216,26 @@ export default function Player({
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [canZap, showGuide, zapChannel])
+  }, [canZap, showGuide, zapChannel, revealUi])
 
   useEffect(() => {
     if (!showGuide || currentChannelIndex < 0) return undefined
     const row = document.getElementById(`live-guide-row-${currentChannelId}`)
     row?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [showGuide, currentChannelId, currentChannelIndex])
+
+  useEffect(() => {
+    if (!isFullscreen) {
+      clearUiHideTimer()
+      setUiVisible(true)
+      return undefined
+    }
+    setUiVisible(true)
+    scheduleUiHide()
+    return () => clearUiHideTimer()
+  }, [isFullscreen, clearUiHideTimer, scheduleUiHide])
+
+  useEffect(() => () => clearUiHideTimer(), [clearUiHideTimer])
 
   useEffect(() => {
     function syncFullscreen() {
@@ -246,6 +312,21 @@ export default function Player({
       ? `${window.location.origin}${url}`
       : url
 
+    const reportError = (message, details = {}) => {
+      logPlaybackError('player', message, { title, url, type, meta, playbackUrl, ...details })
+      setError(message)
+    }
+
+    const logPlayFailure = (context, err) => {
+      logPlaybackWarn('player.play', `Fallo al reproducir (${context})`, {
+        title,
+        url,
+        type,
+        playbackUrl,
+        error: err?.message || String(err),
+      })
+    }
+
     setError('')
     setPlaying(false)
     setCurrent(0)
@@ -259,7 +340,7 @@ export default function Player({
     lastProgressRef.current = 0
     stallTicksRef.current = 0
     if (isLive) {
-      const startMuted = typeof initialMuted === 'boolean' ? initialMuted : true
+      const startMuted = typeof initialMuted === 'boolean' ? initialMuted : false
       setMuted(startMuted)
       setVolume(1)
     }
@@ -271,7 +352,7 @@ export default function Player({
     const liveSupported = mpegts.getFeatureList().mseLivePlayback
 
     if (isLive && liveSupported) {
-      const startMuted = typeof initialMuted === 'boolean' ? initialMuted : true
+      const startMuted = typeof initialMuted === 'boolean' ? initialMuted : false
       video.muted = startMuted
       video.volume = 1
       mpegtsPlayer = mpegts.createPlayer({
@@ -295,17 +376,20 @@ export default function Player({
       mpegtsPlayer.on(mpegts.Events.MEDIA_INFO, () => {
         setLiveStatus('live')
         setSwitching(false)
-        mpegtsPlayer.play().catch(() => {
-          video.play().catch(() => {})
+        mpegtsPlayer.play().catch((err) => {
+          video.play().catch((playErr) => logPlayFailure('mpegts+video', playErr || err))
         })
       })
       mpegtsPlayer.on(mpegts.Events.ERROR, (_, data) => {
         const detail = data?.detail || data?.type || 'error'
         setLiveStatus('stalled')
         if (String(detail).toLowerCase().includes('codec') || String(detail).includes('MEDIA')) {
-          setError('Este canal usa un formato de video no compatible con el navegador (p. ej. HEVC/4K). Prueba otro canal SD/HD.')
+          reportError(
+            'Este canal usa un formato de video no compatible con el navegador (p. ej. HEVC/4K). Prueba otro canal SD/HD.',
+            { engine: 'mpegts', mpegtsError: data },
+          )
         } else {
-          setError(`No se pudo reproducir el canal en vivo (${detail}).`)
+          reportError(`No se pudo reproducir el canal en vivo (${detail}).`, { engine: 'mpegts', mpegtsError: data })
         }
       })
     } else if (isLive && Hls.isSupported()) {
@@ -313,24 +397,35 @@ export default function Player({
       hls.loadSource(playbackUrl)
       hls.attachMedia(video)
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        const startMuted = typeof initialMuted === 'boolean' ? initialMuted : true
+        const startMuted = typeof initialMuted === 'boolean' ? initialMuted : false
         video.muted = startMuted
         video.volume = 1
         setLiveStatus('live')
-        video.play().catch(() => {})
+        video.play().catch((err) => logPlayFailure('hls', err))
       })
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.fatal) {
           setLiveStatus('stalled')
-          setError('No se pudo reproducir el canal en vivo.')
+          reportError('No se pudo reproducir el canal en vivo.', {
+            engine: 'hls',
+            hlsError: {
+              type: data.type,
+              details: data.details,
+              fatal: data.fatal,
+              reason: data.reason,
+              response: data.response,
+            },
+          })
+        } else {
+          logPlaybackWarn('player.hls', 'Error HLS no fatal', { title, url, type, hlsError: data })
         }
       })
     } else if (isLive && video.canPlayType('application/vnd.apple.mpegurl')) {
-      const startMuted = typeof initialMuted === 'boolean' ? initialMuted : true
+      const startMuted = typeof initialMuted === 'boolean' ? initialMuted : false
       video.src = playbackUrl
       video.muted = startMuted
       video.volume = 1
-      video.play().catch(() => {})
+      video.play().catch((err) => logPlayFailure('native-hls', err))
     } else {
       video.setAttribute('playsinline', '')
       video.setAttribute('webkit-playsinline', 'true')
@@ -339,7 +434,7 @@ export default function Player({
       video.volume = 1
       video.muted = false
       video.load()
-      video.play().catch(() => {})
+      video.play().catch((err) => logPlayFailure('vod/native', err))
     }
 
     const onPlay = () => {
@@ -429,7 +524,13 @@ export default function Player({
           message = 'Error de reproducción. El video se está preparando para tu dispositivo; intenta de nuevo.'
         }
       }
-      setError(message)
+      reportError(message, {
+        engine: 'html5-video',
+        mediaErrorCode: code,
+        mediaErrorMessage: mediaError?.message,
+        networkState: video.networkState,
+        readyState: video.readyState,
+      })
     }
 
     if (isLive) {
@@ -552,7 +653,14 @@ export default function Player({
         setMuted(false)
         onMutedChange?.(false)
       }
-      video.play().catch(() => {})
+      video.play().catch((err) => {
+        logPlaybackWarn('player.play', 'Fallo al reproducir (togglePlay)', {
+          title,
+          url,
+          type,
+          error: err?.message || String(err),
+        })
+      })
     } else {
       video.pause()
     }
@@ -643,20 +751,50 @@ export default function Player({
     ? Math.max(prepPercent, 55)
     : prepPercent
 
+  const hidePlayerChrome = isFullscreen && !uiVisible && !showGuide
+
+  useEffect(() => {
+    if (showGuide || showLoadOverlay || switching || error) {
+      setUiVisible(true)
+      if (isFullscreen) scheduleUiHide()
+    }
+  }, [showGuide, showLoadOverlay, switching, error, isFullscreen, scheduleUiHide])
+
   return (
-    <div className="player-overlay" ref={overlayRef}>
-      <div className="player-header">
-        <button type="button" className="player-close" onClick={onClose}>← Volver</button>
-        <div className="player-header-main">
-          <h2>{title}</h2>
-          {isLive ? <span className="player-live-badge">EN VIVO</span> : null}
-        </div>
-      </div>
-      {error ? <div className="player-error">{error}</div> : null}
-      {isLive && muted ? <div className="player-muted-hint">Pulsa ▶ o 🔊 para activar el sonido</div> : null}
+    <div
+      className={`player-overlay${hidePlayerChrome ? ' player-overlay--ui-hidden' : ''}`}
+      ref={overlayRef}
+      onMouseMove={revealUi}
+      onTouchStart={revealUi}
+      onTouchEnd={revealUi}
+    >
+      <Box className="player-header player-chrome" sx={{ display: 'flex', alignItems: 'center', gap: 1.5, px: 2, py: 1.5 }}>
+        <IconButton onClick={onClose} aria-label="Volver" color="inherit" size="small">
+          <ArrowBackIcon />
+        </IconButton>
+        <Box className="player-header-main" sx={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Typography variant="h6" noWrap component="h2" sx={{ flex: 1 }}>
+            {title}
+          </Typography>
+          {isLive ? <Chip label="EN VIVO" color="error" size="small" /> : null}
+        </Box>
+      </Box>
+      {error ? (
+        <Alert severity="error" className="player-chrome" sx={{ mx: 2, mb: 1 }} onClose={() => setError('')}>
+          {error}
+        </Alert>
+      ) : null}
+      {isLive && muted ? (
+        <Alert severity="info" className="player-chrome" sx={{ mx: 2, mb: 1 }} icon={false}>
+          El navegador bloqueó el audio automático. Pulsa reproducir o el icono de volumen.
+        </Alert>
+      ) : null}
       <div
         className="player-stage"
         onDoubleClick={toggleFullscreen}
+        onClick={() => {
+          if (isFullscreen) revealUi()
+        }}
       >
         <video
           ref={videoRef}
@@ -714,36 +852,54 @@ export default function Player({
           </div>
         ) : null}
         {showLoadOverlay ? (
-          <div className="player-load-overlay">
-            <div className="player-load-card">
-              <div className="loading-spinner" />
-              <strong>{isWaiting ? 'Buffering…' : loadPhaseLabel}</strong>
-              <p className="player-load-detail">
+          <Box className="player-load-overlay">
+            <Paper
+              elevation={8}
+              className="player-load-card"
+              sx={{
+                p: 3,
+                minWidth: 260,
+                maxWidth: 360,
+                textAlign: 'center',
+                bgcolor: 'rgba(22, 22, 31, 0.95)',
+              }}
+            >
+              <CircularProgress size={40} sx={{ mb: 2 }} />
+              <Typography variant="subtitle1" fontWeight={700}>
+                {isWaiting ? 'Buffering…' : loadPhaseLabel}
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 2 }}>
                 {loadPhase === 'converting'
                   ? 'Adaptando formato para tu dispositivo'
                   : isLive
                     ? LIVE_STATUS_LABELS[liveStatus] || 'Conectando…'
                     : 'Descargando datos del servidor'}
-              </p>
-              <div className="player-load-progress">
-                <span style={{ width: `${displayPrepPercent}%` }} />
-              </div>
-              <span className="player-load-percent">{displayPrepPercent}%</span>
+              </Typography>
+              <LinearProgress
+                variant="determinate"
+                value={displayPrepPercent}
+                sx={{ height: 8, borderRadius: 4, mb: 1 }}
+              />
+              <Typography variant="h6" color="primary.main">
+                {displayPrepPercent}%
+              </Typography>
               {!isLive && bufferPercent > 0 ? (
-                <span className="player-load-buffer">Buffer: {bufferPercent}%</span>
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                  Buffer: {bufferPercent}%
+                </Typography>
               ) : null}
-            </div>
-          </div>
+            </Paper>
+          </Box>
         ) : null}
       </div>
       {isLive ? (
-        <div className="player-live-status">
+        <div className="player-live-status player-chrome">
           <span className={`player-live-dot player-live-dot--${liveStatus}`} />
           <span>{LIVE_STATUS_LABELS[liveStatus] || LIVE_STATUS_LABELS.live}</span>
         </div>
       ) : null}
       {isLive && epg?.has_epg ? (
-        <div className="player-epg">
+        <div className="player-epg player-chrome">
           {currentProgram ? (
             <div className="player-epg-now">
               <span className="player-epg-label">Ahora</span>
@@ -772,125 +928,134 @@ export default function Player({
         </div>
       ) : null}
       {isLive && epg && !epg.has_epg ? (
-        <div className="player-epg player-epg--empty">Sin guía de programación para este canal.</div>
+        <div className="player-epg player-epg--empty player-chrome">Sin guía de programación para este canal.</div>
       ) : null}
-      <div className="player-controls">
+      <Stack
+        className="player-controls player-chrome"
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ px: { xs: 1, md: 2 }, py: 1.5, flexWrap: 'wrap' }}
+      >
         {canZap ? (
           <>
-            <button
-              type="button"
-              className="player-btn player-btn--zap"
+            <IconButton
               onClick={() => zapChannel('prev')}
               disabled={switching}
               aria-label="Canal anterior"
+              color="inherit"
+              size="small"
             >
-              −
-            </button>
-            <button
-              type="button"
-              className="player-btn player-btn--guide"
+              <RemoveIcon />
+            </IconButton>
+            <IconButton
               onClick={() => setShowGuide((open) => !open)}
               aria-label="Guía de canales"
+              color={showGuide ? 'primary' : 'inherit'}
+              size="small"
             >
-              ☰
-            </button>
-            <button
-              type="button"
-              className="player-btn player-btn--zap"
+              <MenuIcon />
+            </IconButton>
+            <IconButton
               onClick={() => zapChannel('next')}
               disabled={switching}
               aria-label="Canal siguiente"
+              color="inherit"
+              size="small"
             >
-              +
-            </button>
+              <AddIcon />
+            </IconButton>
           </>
         ) : null}
-        <button type="button" className="player-btn" onClick={togglePlay} aria-label={playing ? 'Pausar' : 'Reproducir'}>
-          {playing ? '⏸' : '▶'}
-        </button>
+        <IconButton onClick={togglePlay} aria-label={playing ? 'Pausar' : 'Reproducir'} color="inherit">
+          {playing ? <PauseIcon /> : <PlayArrowIcon />}
+        </IconButton>
         {isLive ? (
-          <span className="player-time player-time--live">
+          <Typography variant="body2" className="player-time player-time--live" sx={{ minWidth: 72 }}>
             {currentChannelNumber ? `Canal ${currentChannelNumber}` : 'En directo'}
-          </span>
+          </Typography>
         ) : (
-          <span className="player-time">
+          <Typography variant="body2" className="player-time" sx={{ minWidth: 96, fontVariantNumeric: 'tabular-nums' }}>
             {formatTime(current)}
             {` / ${totalDuration > 0 ? formatTime(totalDuration) : '--:--'}`}
-          </span>
+          </Typography>
         )}
         {isLive ? (
-          <div className={`player-live-bar player-live-bar--${liveStatus}`} aria-hidden="true">
-            <span className="player-live-bar-fill" />
-          </div>
-        ) : (
-          <div className="player-seek-wrap">
-            <div className="player-seek-track" aria-hidden="true">
-              <span
-                className="player-seek-buffered"
-                style={{ width: `${bufferedPercent}%` }}
-              />
-              <span
-                className="player-seek-played"
-                style={{ width: `${playedPercent}%` }}
-              />
-            </div>
-            <input
-              className="player-seek"
-              type="range"
-              min="0"
-              max={totalDuration > 0 ? totalDuration : 100}
-              step="0.1"
-              value={Math.min(current, totalDuration > 0 ? totalDuration : current)}
-              onChange={(e) => seek(e.target.value)}
-              aria-label="Posición de reproducción"
+          <Box sx={{ flex: 1, minWidth: 80 }}>
+            <LinearProgress
+              variant="indeterminate"
+              color={liveStatus === 'stalled' ? 'error' : 'primary'}
+              sx={{ height: 4, borderRadius: 2 }}
             />
-          </div>
+          </Box>
+        ) : (
+          <Box className="player-seek-wrap" sx={{ flex: 1, minWidth: 120, position: 'relative', px: 0.5 }}>
+            <Slider
+              size="small"
+              min={0}
+              max={totalDuration > 0 ? totalDuration : 100}
+              step={0.1}
+              value={Math.min(current, totalDuration > 0 ? totalDuration : current)}
+              onChange={(_, value) => seek(value)}
+              aria-label="Posición de reproducción"
+              sx={{
+                '& .MuiSlider-rail': { opacity: 0.3 },
+                '& .MuiSlider-track': { border: 'none' },
+              }}
+            />
+          </Box>
         )}
-        <button type="button" className="player-btn" onClick={toggleMute} aria-label={muted ? 'Activar sonido' : 'Silenciar'}>
-          {muted || volume === 0 ? '🔇' : '🔊'}
-        </button>
-        <input
-          className="player-volume"
-          type="range"
-          min="0"
-          max="1"
-          step="0.05"
+        <IconButton onClick={toggleMute} aria-label={muted ? 'Activar sonido' : 'Silenciar'} color="inherit" size="small">
+          {muted || volume === 0 ? <VolumeOffIcon /> : <VolumeUpIcon />}
+        </IconButton>
+        <Slider
+          size="small"
+          min={0}
+          max={1}
+          step={0.05}
           value={volume}
-          onChange={(e) => changeVolume(e.target.value)}
+          onChange={(_, value) => changeVolume(value)}
+          aria-label="Volumen"
+          sx={{ width: { xs: 56, sm: 80 }, display: { xs: 'none', sm: 'block' } }}
         />
-        <button
-          type="button"
-          className="player-btn player-btn--fullscreen"
+        <IconButton
           onClick={toggleFullscreen}
           aria-label={isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
+          color="inherit"
+          size="small"
         >
-          {isFullscreen ? '⤢' : '⛶'}
-        </button>
+          {isFullscreen ? <FullscreenExitIcon /> : <FullscreenIcon />}
+        </IconButton>
         {isVodLike && audioTracks.length > 1 ? (
-          <label className="player-track-select">
-            <span>Audio</span>
-            <select value={selectedAudio} onChange={(e) => changeAudioTrack(e.target.value)}>
+          <FormControl size="small" sx={{ minWidth: 100 }}>
+            <Select
+              value={selectedAudio}
+              onChange={(e) => changeAudioTrack(e.target.value)}
+              displayEmpty
+              variant="outlined"
+            >
               {audioTracks.map((track) => (
-                <option key={track.index} value={track.index}>{track.label}</option>
+                <MenuItem key={track.index} value={track.index}>{track.label}</MenuItem>
               ))}
-            </select>
-          </label>
+            </Select>
+          </FormControl>
         ) : null}
         {isVodLike && subtitleTracks.length > 0 ? (
-          <label className="player-track-select">
-            <span>Subs</span>
-            <select
+          <FormControl size="small" sx={{ minWidth: 100 }}>
+            <Select
               value={selectedSubtitle}
               onChange={(e) => changeSubtitleTrack(e.target.value)}
+              displayEmpty
+              variant="outlined"
             >
-              <option value="-1">Off</option>
+              <MenuItem value="-1">Subs off</MenuItem>
               {subtitleTracks.map((track) => (
-                <option key={track.index} value={track.index}>{track.label}</option>
+                <MenuItem key={track.index} value={track.index}>{track.label}</MenuItem>
               ))}
-            </select>
-          </label>
+            </Select>
+          </FormControl>
         ) : null}
-      </div>
+      </Stack>
     </div>
   )
 }

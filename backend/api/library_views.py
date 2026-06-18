@@ -63,6 +63,37 @@ class ViewHistoryListView(APIView):
         items = qs.order_by('-viewed_at')[:limit_value]
         return Response(ViewHistorySerializer(items, many=True).data)
 
+    def delete(self, request):
+        content_type = request.query_params.get('type', '').strip().lower()
+        item_id = request.query_params.get('item_id', '').strip()
+
+        if item_id:
+            if content_type not in {'live', 'vod', 'series'}:
+                return Response(
+                    {'detail': 'Indica type (live, vod o series) junto con item_id.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            deleted, _ = ViewHistory.objects.filter(
+                user=request.user,
+                content_type=content_type,
+                item_id=item_id,
+            ).delete()
+            if not deleted:
+                return Response({'detail': 'No encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        if content_type not in {'live', 'vod', 'series'}:
+            return Response(
+                {'detail': 'Indica type (live, vod o series) o item_id.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        deleted, _ = ViewHistory.objects.filter(
+            user=request.user,
+            content_type=content_type,
+        ).delete()
+        return Response({'deleted': deleted}, status=status.HTTP_200_OK)
+
 
 class WatchProgressDetailView(APIView):
     permission_classes = [IsAuthenticated]
@@ -108,6 +139,16 @@ class WatchProgressDetailView(APIView):
             },
         )
         return Response(_progress_to_item(progress))
+
+    def delete(self, request, content_type, item_id):
+        deleted, _ = WatchProgress.objects.filter(
+            user=request.user,
+            content_type=content_type,
+            item_id=item_id,
+        ).delete()
+        if not deleted:
+            return Response({'detail': 'No encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class ViewHistoryUpsertView(APIView):

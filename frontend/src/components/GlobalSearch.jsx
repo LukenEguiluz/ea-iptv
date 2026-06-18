@@ -1,8 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
+import {
+  Alert,
+  Box,
+  Chip,
+  Dialog,
+  IconButton,
+  InputAdornment,
+  Stack,
+  TextField,
+  Typography,
+} from '@mui/material'
+import CloseIcon from '@mui/icons-material/Close'
+import SearchIcon from '@mui/icons-material/Search'
 import { searchCatalog } from '../api'
 import { usePlayback } from '../context/PlaybackContext'
 import LoadingState from './LoadingState'
-import MediaCard from './MediaCard'
+import SearchResults from './SearchResults'
 
 const TABS = [
   { id: '', label: 'Todo' },
@@ -32,8 +45,6 @@ export default function GlobalSearch({ onClose }) {
 
   useEffect(() => {
     inputRef.current?.focus()
-    document.body.classList.add('search-open')
-    return () => document.body.classList.remove('search-open')
   }, [])
 
   useEffect(() => {
@@ -77,65 +88,59 @@ export default function GlobalSearch({ onClose }) {
   }
 
   return (
-    <div className="global-search-overlay" role="dialog" aria-modal="true" aria-label="Buscador">
-      <div className="global-search-panel">
-        <div className="global-search-header">
-          <input
-            ref={inputRef}
-            className="global-search-input"
-            type="search"
-            enterKeyHint="search"
-            autoComplete="off"
-            autoCorrect="off"
-            spellCheck="false"
+    <Dialog fullScreen open onClose={onClose} PaperProps={{ sx: { bgcolor: 'background.default' } }}>
+      <Stack spacing={2} sx={{ p: { xs: 2, md: 3 }, height: '100%' }}>
+        <Stack direction="row" spacing={1} alignItems="center">
+          <TextField
+            inputRef={inputRef}
+            fullWidth
             placeholder="Buscar canales, películas, series, actores…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon color="action" />
+                </InputAdornment>
+              ),
+            }}
           />
-          <button type="button" className="global-search-close" onClick={onClose}>
-            Cerrar
-          </button>
-        </div>
+          <IconButton onClick={onClose} aria-label="Cerrar">
+            <CloseIcon />
+          </IconButton>
+        </Stack>
 
-        <div className="global-search-tabs" role="tablist">
+        <Stack direction="row" spacing={1} sx={{ overflowX: 'auto', pb: 0.5 }}>
           {TABS.map((tab) => (
-            <button
+            <Chip
               key={tab.id || 'all'}
-              type="button"
-              role="tab"
-              aria-selected={type === tab.id}
-              className={type === tab.id ? 'active' : ''}
+              label={tab.label}
+              clickable
+              color={type === tab.id ? 'primary' : 'default'}
+              variant={type === tab.id ? 'filled' : 'outlined'}
               onClick={() => setType(tab.id)}
-            >
-              {tab.label}
-            </button>
+            />
           ))}
-        </div>
+        </Stack>
 
-        <div className="global-search-body">
+        <Box sx={{ flex: 1, overflow: 'auto' }}>
           {loading ? <LoadingState message="Buscando…" /> : null}
-          {error ? <div className="search-empty">{error}</div> : null}
+          {error ? <Alert severity="error">{error}</Alert> : null}
           {!loading && !error && query.trim().length < 2 ? (
-            <div className="search-empty">Escribe al menos 2 caracteres para buscar.</div>
+            <Typography color="text.secondary">Escribe al menos 2 caracteres para buscar.</Typography>
           ) : null}
           {!loading && !error && debouncedQuery.trim().length >= 2 && results.length === 0 ? (
-            <div className="search-empty">No se encontraron resultados.</div>
+            <Typography color="text.secondary">No se encontraron resultados.</Typography>
           ) : null}
           {!loading && !error && results.length > 0 ? (
-            <div className="global-search-results">
-              {results.map((item) => (
-                <MediaCard
-                  key={`${item.content_type}-${item.item_id}`}
-                  title={item.name}
-                  image={item.image}
-                  subtitle={[item.category_name, item.year, item.rating, item.cast].filter(Boolean).join(' · ')}
-                  onClick={() => handleSelect(item)}
-                />
-              ))}
-            </div>
+            <SearchResults
+              results={results}
+              activeType={type}
+              onSelect={handleSelect}
+            />
           ) : null}
-        </div>
-      </div>
-    </div>
+        </Box>
+      </Stack>
+    </Dialog>
   )
 }

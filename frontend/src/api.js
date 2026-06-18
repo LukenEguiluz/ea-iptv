@@ -209,6 +209,33 @@ export async function recordViewHistory(payload) {
   })
 }
 
+export async function deleteViewHistory(contentType, itemId) {
+  const params = new URLSearchParams({ type: contentType, item_id: String(itemId) })
+  const response = await apiFetch(`/library/history?${params}`, { method: 'DELETE' })
+  if (!response.ok && response.status !== 204) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'No se pudo borrar del historial')
+  }
+}
+
+export async function deleteWatchProgress(contentType, itemId) {
+  const response = await apiFetch(`/library/progress/${contentType}/${itemId}`, { method: 'DELETE' })
+  if (!response.ok && response.status !== 204) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'No se pudo borrar el progreso')
+  }
+}
+
+export async function clearViewHistory(contentType) {
+  const params = new URLSearchParams({ type: contentType })
+  const response = await apiFetch(`/library/history?${params}`, { method: 'DELETE' })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'No se pudo limpiar el historial')
+  }
+  return response.json()
+}
+
 export async function buildPlayerSession(item, options = {}) {
   const contentType = item.content_type || item.type
   const itemId = String(item.item_id || item.stream_id || item.series_id || '')
