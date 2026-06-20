@@ -19,6 +19,7 @@ from .catalog_list import (
     _parse_page_limit,
     catalog_index_ready,
     list_catalog_from_index,
+    list_categories_from_index,
     paginate_list,
 )
 from .stream_utils import get_media_playback_info
@@ -118,6 +119,8 @@ class CatalogBaseView(APIView):
 
 class LiveCategoriesView(CatalogBaseView):
     def get(self, request):
+        if catalog_index_ready():
+            return Response(list_categories_from_index(CatalogItem.CONTENT_LIVE))
         data = xtream_request(request.user, 'get_live_categories', ip_address=_client_ip(request))
         return Response(data)
 
@@ -202,6 +205,8 @@ class LiveStreamsView(CatalogBaseView):
 
 class VodCategoriesView(CatalogBaseView):
     def get(self, request):
+        if catalog_index_ready():
+            return Response(list_categories_from_index(CatalogItem.CONTENT_VOD))
         data = xtream_request(request.user, 'get_vod_categories', ip_address=_client_ip(request))
         return Response(data)
 
@@ -239,6 +244,8 @@ class VodStreamsView(CatalogBaseView):
 
 class SeriesCategoriesView(CatalogBaseView):
     def get(self, request):
+        if catalog_index_ready():
+            return Response(list_categories_from_index(CatalogItem.CONTENT_SERIES))
         data = xtream_request(request.user, 'get_series_categories', ip_address=_client_ip(request))
         return Response(data)
 

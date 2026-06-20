@@ -24,9 +24,12 @@ import RemoveIcon from '@mui/icons-material/Remove'
 import AddIcon from '@mui/icons-material/Add'
 import VolumeOffIcon from '@mui/icons-material/VolumeOff'
 import VolumeUpIcon from '@mui/icons-material/VolumeUp'
+import PictureInPictureAltIcon from '@mui/icons-material/PictureInPictureAlt'
+import PictureInPictureIcon from '@mui/icons-material/PictureInPicture'
 import Hls from 'hls.js'
 import mpegts from 'mpegts.js'
 import { saveWatchProgress } from '../api'
+import { resolveApiUrl } from '../config'
 import {
   appendClientDecode,
   attachAvbridgePlayer,
@@ -107,6 +110,8 @@ export default function Player({
 }) {
   const videoRef = useRef(null)
   const overlayRef = useRef(null)
+  const avbridgeHandleRef = useRef(null)
+  const mpegtsPlayerRef = useRef(null)
   const loadStartedRef = useRef(Date.now())
   const lastProgressRef = useRef(0)
   const stallTicksRef = useRef(0)
@@ -139,6 +144,12 @@ export default function Player({
   const [prepPercent, setPrepPercent] = useState(0)
   const [bufferPercent, setBufferPercent] = useState(0)
   const [isWaiting, setIsWaiting] = useState(false)
+  const [isSeeking, setIsSeeking] = useState(false)
+  const [scrubTime, setScrubTime] = useState(0)
+  const [isScrubbing, setIsScrubbing] = useState(false)
+  const [isPip, setIsPip] = useState(false)
+  const userPausedRef = useRef(false)
+  const togglePlayRef = useRef(() => {})
   const isLive = type === 'live'
   const isVodLike = type === 'vod' || type === 'series'
   const audioTracks = tracks?.audio || []
@@ -240,6 +251,30 @@ export default function Player({
   }, [clearReconnectTimer, clearWaitingReconnectTimer])
 
   const scheduleLiveReconnectRef = useRef(() => {})
+  const forceLiveReconnectRef = useRef(async () => {})
+
+  const forceLiveReconnect = useCallback(async (reason) => {
+    if (!isLive || !onLiveReconnectRef.current) return
+    clearReconnectTimer()
+    logPlaybackWarn('player.liveWatchdog', reason, {
+      title,
+      url,
+    })
+    setLiveStatus('reconnecting')
+    setError('')
+    try {
+      await onLiveReconnectRef.current()
+      reconnectAttemptsRef.current = 0
+      lastProgressRef.current = 0
+      stallTicksRef.current = 0
+    } catch (err) {
+      logPlaybackWarn('player.liveWatchdog', 'Fallo al reconectar', {
+        title,
+        error: err?.message || String(err),
+      })
+      scheduleLiveReconnectRef.current(`watchdog falló: ${err?.message || 'error'}`)
+    }
+  }, [isLive, title, url, clearReconnectTimer])
 
   const scheduleLiveReconnect = useCallback((reason) => {
     if (!isLive || !onLiveReconnectRef.current) return
@@ -282,19 +317,51 @@ export default function Player({
   }, [scheduleLiveReconnect])
 
   useEffect(() => {
-    if (!isLive) return undefined
+    forceLiveReconnectRef.current = forceLiveReconnect
+  }, [forceLiveReconnect])
 
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return undefined
+
+    const onEnterPip = () => setIsPip(true)
+    const onLeavePip = () => setIsPip(false)
+    video.addEventListener('enterpictureinpicture', onEnterPip)
+    video.addEventListener('leavepictureinpicture', onLeavePip)
+    return () => {
+      video.removeEventListener('enterpictureinpicture', onEnterPip)
+      video.removeEventListener('leavepictureinpicture', onLeavePip)
+    }
+  }, [url])
+
+  useEffect(() => {
     function onVisibilityChange() {
       if (document.visibilityState !== 'visible') return
-      const status = liveStatusRef.current
-      if (status === 'stalled' || status === 'reconnecting' || status === 'buffering') {
-        scheduleLiveReconnectRef.current('pestaña visible de nuevo')
+
+      if (isLive) {
+        const status = liveStatusRef.current
+        if (status === 'stalled' || status === 'reconnecting' || status === 'buffering') {
+          scheduleLiveReconnectRef.current('pestaña visible de nuevo')
+        }
+        return
+      }
+
+      const video = videoRef.current
+      if (!video || userPausedRef.current) return
+      const handle = avbridgeHandleRef.current
+      const isPaused = handle?.player ? handle.player.paused : video.paused
+      if (isPaused) {
+        if (handle?.play) {
+          handle.play().catch(() => {})
+        } else {
+          video.play().catch(() => {})
+        }
       }
     }
 
     document.addEventListener('visibilitychange', onVisibilityChange)
     return () => document.removeEventListener('visibilitychange', onVisibilityChange)
-  }, [isLive])
+  }, [isLive, url])
 
   useEffect(() => () => {
     clearReconnectTimer()
@@ -328,6 +395,23 @@ export default function Player({
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [canZap, showGuide, zapChannel, revealUi])
+
+  useEffect(() => {
+    if (!url) return undefined
+
+    function handleKeyDown(event) {
+      const tag = event.target?.tagName?.toLowerCase()
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return
+      if (event.key === ' ' || event.key === 'k' || event.key === 'K') {
+        event.preventDefault()
+        revealUi()
+        togglePlayRef.current()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [url, revealUi])
 
   useEffect(() => {
     if (!showGuide || currentChannelIndex < 0) return undefined
@@ -372,11 +456,9 @@ export default function Player({
     const video = videoRef.current
     if (!video || !url) return undefined
 
-    const playbackUrl = url.startsWith('/')
-      ? `${window.location.origin}${url}`
-      : url
-    const needsConversion = isVodLike && playbackUrl.includes('/api/proxy/play') && !shouldUseAvbridgeForVod(playbackUrl, isVodLike)
-    const useAvbridgeVodPreview = shouldUseAvbridgeForVod(playbackUrl, isVodLike)
+    const playbackUrl = resolveApiUrl(url)
+    const needsConversion = isVodLike && playbackUrl.includes('/api/proxy/play') && !shouldUseAvbridgeForVod(playbackUrl, isVodLike, meta?.ext)
+    const useAvbridgeVodPreview = shouldUseAvbridgeForVod(playbackUrl, isVodLike, meta?.ext)
 
     loadStartedRef.current = Date.now()
     setLoadPhase(useAvbridgeVodPreview ? 'avbridge' : (needsConversion ? 'converting' : 'loading'))
@@ -420,9 +502,7 @@ export default function Player({
     const video = videoRef.current
     if (!video || !url) return undefined
 
-    const playbackUrl = url.startsWith('/')
-      ? `${window.location.origin}${url}`
-      : url
+    const playbackUrl = resolveApiUrl(url)
 
     const reportError = (message, details = {}) => {
       logPlaybackError('player', message, { title, url, type, meta, playbackUrl, ...details })
@@ -475,8 +555,12 @@ export default function Player({
     setPrepPercent(0)
     setBufferPercent(0)
     setIsWaiting(false)
+    setIsSeeking(false)
+    setIsScrubbing(false)
+    setScrubTime(0)
+    userPausedRef.current = false
     resetLiveRecovery()
-    const useAvbridgeVod = shouldUseAvbridgeForVod(playbackUrl, isVodLike)
+    const useAvbridgeVod = shouldUseAvbridgeForVod(playbackUrl, isVodLike, meta?.ext)
     setLoadPhase(isLive ? 'connecting' : (useAvbridgeVod ? 'avbridge' : (url.includes('/api/proxy/play') ? 'converting' : 'loading')))
     if (isLive) setLiveStatus('connecting')
     lastProgressRef.current = 0
@@ -491,7 +575,58 @@ export default function Player({
     let mpegtsPlayer
     let avbridgeHandle
     let avbridgeStarting = false
+    let serverFallbackUsed = false
     let stallInterval
+    let liveWatchdogInterval
+    let liveWatchdogLastTime = 0
+    let liveWatchdogStagnantSince = null
+
+    const destroyAvbridge = async () => {
+      if (!avbridgeHandle) return
+      const handle = avbridgeHandle
+      avbridgeHandle = null
+      avbridgeHandleRef.current = null
+      await handle.destroy().catch(() => {})
+    }
+
+    const startServerTranscodePlayback = (reason, resumePosition = 0) => {
+      if (serverFallbackUsed) return
+      serverFallbackUsed = true
+      const serverUrl = stripClientDecode(playbackUrl)
+      const targetResume = resumePosition > 0 ? resumePosition : resumeAt
+      logAvbridgeWarn('server-fallback', `Reintentando con conversión en servidor (${reason})`, {
+        serverUrl,
+        resumePosition: targetResume,
+      })
+      setLoadPhase('converting')
+      setError('')
+      destroyAvbridge().finally(() => {
+        video.pause()
+        video.removeAttribute('src')
+        video.setAttribute('playsinline', '')
+        video.setAttribute('webkit-playsinline', 'true')
+        video.preload = 'auto'
+        video.src = serverUrl
+        video.volume = 1
+        video.muted = false
+        const onServerMeta = () => {
+          if (targetResume > 5 && video.duration > targetResume + 5) {
+            video.currentTime = targetResume
+            setCurrent(targetResume)
+          }
+          video.removeEventListener('loadedmetadata', onServerMeta)
+        }
+        video.addEventListener('loadedmetadata', onServerMeta)
+        video.load()
+        video.play().catch((err) => logPlayFailure('server-transcode', err))
+      })
+    }
+
+    const switchToServerTranscode = (reason) => {
+      if (serverFallbackUsed || isLive) return
+      const resumePosition = video.currentTime > 0 ? video.currentTime : resumeAt
+      startServerTranscodePlayback(reason, resumePosition)
+    }
 
     const destroyMpegts = () => {
       if (!mpegtsPlayer) return
@@ -500,23 +635,6 @@ export default function Player({
       mpegtsPlayer.detachMediaElement()
       mpegtsPlayer.destroy()
       mpegtsPlayer = null
-    }
-
-    const startServerTranscodePlayback = (reason) => {
-      const serverUrl = stripClientDecode(playbackUrl)
-      logAvbridgeWarn('server-fallback', `Reintentando con conversión en servidor (${reason})`, { serverUrl })
-      setLoadPhase('converting')
-      setError('')
-      video.pause()
-      video.removeAttribute('src')
-      video.setAttribute('playsinline', '')
-      video.setAttribute('webkit-playsinline', 'true')
-      video.preload = 'auto'
-      video.src = serverUrl
-      video.volume = 1
-      video.muted = false
-      video.load()
-      video.play().catch((err) => logPlayFailure('server-transcode', err))
     }
 
     const startAvbridgePlayback = async (reason, { live = false } = {}) => {
@@ -546,7 +664,45 @@ export default function Player({
             ? (typeof initialMuted === 'boolean' ? initialMuted : true)
             : false,
           context: { title, type, reason, live },
+          onTimeUpdate: ({ currentTime }) => {
+            if (isLive) return
+            setCurrent(currentTime)
+            if (meta?.itemId && isVodLike) {
+              const now = Date.now()
+              const totalDuration = durationHint || video.duration || 0
+              if (now - lastSavedRef.current > 12000 && currentTime > 0) {
+                lastSavedRef.current = now
+                saveWatchProgress({
+                  content_type: meta.contentType || type,
+                  item_id: meta.itemId,
+                  series_id: meta.seriesId || '',
+                  title: meta.title || title,
+                  image: meta.image || '',
+                  ext: meta.ext || '',
+                  position_seconds: currentTime,
+                  duration_seconds: totalDuration || null,
+                })
+              }
+            }
+          },
+          onStrategyChange: (payload) => {
+            if (live) return
+            if (payload.to === 'hybrid' || payload.to === 'fallback') {
+              switchToServerTranscode(`${payload.from}→${payload.to}: ${payload.reason || 'escalación'}`)
+            }
+          },
+          onError: (err) => {
+            if (!live) {
+              switchToServerTranscode(`avbridge error: ${err?.message || 'error'}`)
+            }
+          },
+          onStall: () => {
+            if (!live) {
+              switchToServerTranscode('avbridge sin avance tras estar listo')
+            }
+          },
         })
+        avbridgeHandleRef.current = avbridgeHandle
         setPrepPercent(100)
         setLoadPhase('playing')
         if (live) {
@@ -596,6 +752,7 @@ export default function Player({
       })
       mpegtsPlayer.attachMediaElement(video)
       mpegtsPlayer.load()
+      mpegtsPlayerRef.current = mpegtsPlayer
       mpegtsPlayer.on(mpegts.Events.MEDIA_INFO, () => {
         setLiveStatus('live')
         setSwitching(false)
@@ -648,6 +805,11 @@ export default function Player({
       })
       startAvbridgePlayback('vod primary', { live: false })
     } else {
+      const needsServerTranscode = playbackUrl.includes('/api/proxy/play')
+        && !shouldUseAvbridgeForVod(playbackUrl, isVodLike, meta?.ext)
+      if (needsServerTranscode) {
+        setLoadPhase('converting')
+      }
       video.setAttribute('playsinline', '')
       video.setAttribute('webkit-playsinline', 'true')
       video.preload = 'auto'
@@ -660,6 +822,7 @@ export default function Player({
 
     const onPlay = () => {
       setPlaying(true)
+      userPausedRef.current = false
       setIsWaiting(false)
       clearWaitingReconnectTimer()
       setPrepPercent(100)
@@ -669,7 +832,10 @@ export default function Player({
         reconnectAttemptsRef.current = 0
       }
     }
-    const onPause = () => setPlaying(false)
+    const onPause = () => {
+      setPlaying(false)
+      userPausedRef.current = true
+    }
     const onWaiting = () => {
       setIsWaiting(true)
       if (isLive) {
@@ -740,6 +906,12 @@ export default function Player({
         resumeAppliedRef.current = true
       }
     }
+    const onSeeking = () => {
+      if (!isLive) setIsSeeking(true)
+    }
+    const onSeeked = () => {
+      if (!isLive) setIsSeeking(false)
+    }
     const onVol = () => {
       setVolume(video.volume)
       setMuted(video.muted)
@@ -762,11 +934,16 @@ export default function Player({
         return
       }
       if (!avbridgeHandle && !avbridgeStarting && isVodLike && playbackUrl.includes('/api/proxy/play')) {
-        logAvbridgeWarn('native-fallback', 'HTML5 falló, probando avbridge', {
+        const via = shouldUseAvbridgeForVod(playbackUrl, isVodLike, meta?.ext) ? 'html5' : 'server'
+        logAvbridgeWarn('native-fallback', `${via} falló, probando avbridge`, {
           mediaErrorCode: code,
           mediaErrorMessage: mediaError?.message,
         })
-        startAvbridgePlayback(`html5 error ${code || 'unknown'}`, { live: false })
+        startAvbridgePlayback(`${via} error ${code || 'unknown'}`, { live: false })
+        return
+      }
+      if (avbridgeHandle && !serverFallbackUsed && isVodLike && playbackUrl.includes('/api/proxy/play')) {
+        switchToServerTranscode(`error video durante avbridge: ${code || 'unknown'}`)
         return
       }
       let message = 'No se pudo reproducir el video.'
@@ -789,6 +966,27 @@ export default function Player({
     }
 
     if (isLive) {
+      liveWatchdogInterval = window.setInterval(() => {
+        const videoEl = videoRef.current
+        if (!videoEl || userPausedRef.current || videoEl.paused) {
+          liveWatchdogStagnantSince = null
+          return
+        }
+        const progress = videoEl.currentTime
+        if (Math.abs(progress - liveWatchdogLastTime) >= 0.01) {
+          liveWatchdogLastTime = progress
+          liveWatchdogStagnantSince = null
+          return
+        }
+        const now = Date.now()
+        if (liveWatchdogStagnantSince === null) {
+          liveWatchdogStagnantSince = now
+        } else if (now - liveWatchdogStagnantSince >= 8000) {
+          liveWatchdogStagnantSince = null
+          forceLiveReconnectRef.current('watchdog: sin avance en 8s')
+        }
+      }, 2000)
+
       stallInterval = window.setInterval(() => {
         const videoEl = videoRef.current
         if (!videoEl || videoEl.paused || videoEl.readyState < 2) return
@@ -822,9 +1020,12 @@ export default function Player({
     video.addEventListener('durationchange', onMeta)
     video.addEventListener('progress', onTime)
     video.addEventListener('volumechange', onVol)
+    video.addEventListener('seeking', onSeeking)
+    video.addEventListener('seeked', onSeeked)
     video.addEventListener('error', onMediaError)
 
     return () => {
+      if (liveWatchdogInterval) window.clearInterval(liveWatchdogInterval)
       if (stallInterval) window.clearInterval(stallInterval)
       clearWaitingReconnectTimer()
       clearReconnectTimer()
@@ -846,10 +1047,12 @@ export default function Player({
       if (mpegtsPlayer) {
         destroyMpegts()
       }
+      mpegtsPlayerRef.current = null
       if (hls) hls.destroy()
       if (avbridgeHandle) {
         avbridgeHandle.destroy().catch(() => {})
       }
+      avbridgeHandleRef.current = null
       video.removeEventListener('play', onPlay)
       video.removeEventListener('pause', onPause)
       video.removeEventListener('waiting', onWaiting)
@@ -861,6 +1064,8 @@ export default function Player({
       video.removeEventListener('durationchange', onMeta)
       video.removeEventListener('progress', onTime)
       video.removeEventListener('volumechange', onVol)
+      video.removeEventListener('seeking', onSeeking)
+      video.removeEventListener('seeked', onSeeked)
       video.removeEventListener('error', onMediaError)
       video.pause()
       video.removeAttribute('src')
@@ -875,10 +1080,60 @@ export default function Player({
   }, [url, durationHint, isLive])
 
   async function changeAudioTrack(value) {
-    if (!value || !meta?.playPath || !onUrlChange) return
+    if (!value) return
+    const handle = avbridgeHandleRef.current
+    if (handle?.setAudioTrack && handle.getAudioTracks) {
+      const avTracks = handle.getAudioTracks()
+      const backendIndex = audioTracks.findIndex((track) => String(track.index) === value)
+      const avTrack = avTracks[backendIndex >= 0 ? backendIndex : 0]
+      if (avTrack) {
+        setSelectedAudio(value)
+        try {
+          await handle.setAudioTrack(avTrack.id)
+        } catch (err) {
+          logPlaybackWarn('player.audio', 'No se pudo cambiar pista de audio (avbridge)', {
+            value,
+            error: err?.message || String(err),
+          })
+        }
+        return
+      }
+    }
+    if (!meta?.playPath || !onUrlChange) return
     const resumePosition = videoRef.current?.currentTime || 0
     setSelectedAudio(value)
     await onUrlChange(meta.playPath, Number(value), resumePosition)
+  }
+
+  async function commitSeek(value) {
+    const video = videoRef.current
+    if (!video || isLive) return
+    const time = Number(value)
+    setIsSeeking(true)
+    setCurrent(time)
+    setScrubTime(time)
+    try {
+      const handle = avbridgeHandleRef.current
+      if (handle?.seek) {
+        await handle.seek(time)
+      } else {
+        video.currentTime = time
+      }
+    } catch (err) {
+      logPlaybackWarn('player.seek', 'Fallo al buscar posición', {
+        time,
+        error: err?.message || String(err),
+      })
+    } finally {
+      setIsSeeking(false)
+      setIsScrubbing(false)
+    }
+  }
+
+  function previewSeek(value) {
+    if (isLive) return
+    setIsScrubbing(true)
+    setScrubTime(Number(value))
   }
 
   function changeSubtitleTrack(value) {
@@ -909,13 +1164,23 @@ export default function Player({
   function togglePlay() {
     const video = videoRef.current
     if (!video) return
-    if (video.paused) {
+    const handle = avbridgeHandleRef.current
+    const mpegts = mpegtsPlayerRef.current
+    const isPaused = handle?.player ? handle.player.paused : video.paused
+
+    if (isPaused) {
+      userPausedRef.current = false
       if (isLive && video.muted) {
         video.muted = false
         setMuted(false)
         onMutedChange?.(false)
       }
-      video.play().catch((err) => {
+      const playAction = handle?.play
+        ? handle.play()
+        : mpegts?.play
+          ? mpegts.play()
+          : video.play()
+      Promise.resolve(playAction).catch((err) => {
         logPlaybackWarn('player.play', 'Fallo al reproducir (togglePlay)', {
           title,
           url,
@@ -924,14 +1189,32 @@ export default function Player({
         })
       })
     } else {
-      video.pause()
+      userPausedRef.current = true
+      if (handle?.pause) {
+        handle.pause()
+      } else if (mpegts?.pause) {
+        mpegts.pause()
+      } else {
+        video.pause()
+      }
     }
   }
+  togglePlayRef.current = togglePlay
 
-  function seek(value) {
+  async function togglePictureInPicture() {
     const video = videoRef.current
-    if (!video || isLive) return
-    video.currentTime = Number(value)
+    if (!video || isLive || !document.pictureInPictureEnabled) return
+    try {
+      if (document.pictureInPictureElement === video) {
+        await document.exitPictureInPicture()
+      } else if (video.requestPictureInPicture) {
+        await video.requestPictureInPicture()
+      }
+    } catch (err) {
+      logPlaybackWarn('player.pip', 'No se pudo activar Picture-in-Picture', {
+        error: err?.message || String(err),
+      })
+    }
   }
 
   function changeVolume(value) {
@@ -983,19 +1266,18 @@ export default function Player({
     }
   }
 
+  const displayTime = isScrubbing ? scrubTime : current
   const totalDuration = durationHint > 0
     ? durationHint
     : ((duration > 0 && Number.isFinite(duration)) ? duration : 0)
   const playedPercent = totalDuration > 0
-    ? Math.min(100, (current / totalDuration) * 100)
+    ? Math.min(100, (displayTime / totalDuration) * 100)
     : 0
   const bufferedPercent = totalDuration > 0
     ? Math.min(100, (buffered / totalDuration) * 100)
     : 0
   const activeSubtitle = subtitleTracks.find((track) => String(track.index) === selectedSubtitle)
-  const subtitleSrc = activeSubtitle?.url
-    ? (activeSubtitle.url.startsWith('/') ? `${window.location.origin}${activeSubtitle.url}` : activeSubtitle.url)
-    : null
+  const subtitleSrc = activeSubtitle?.url ? resolveApiUrl(activeSubtitle.url) : null
   const currentProgram = epg?.current
   const upcomingPrograms = (epg?.listings || []).filter((item) => !item.now).slice(0, 4)
 
@@ -1009,7 +1291,7 @@ export default function Player({
     idle: 'Preparando',
   }[loadPhase] || 'Cargando'
 
-  const showLoadOverlay = prepPercent < 100 || isWaiting || liveStatus === 'reconnecting'
+  const showLoadOverlay = prepPercent < 100 || isWaiting || isSeeking || liveStatus === 'reconnecting'
     || loadPhase === 'avbridge'
     || (isLive && (liveStatus === 'connecting' || liveStatus === 'buffering'))
   const displayPrepPercent = isLive && liveStatus === 'buffering'
@@ -1069,7 +1351,11 @@ export default function Player({
           playsInline
           muted={muted}
           onClick={() => {
-            if (isIosDevice() && !playing) toggleFullscreen()
+            if (isIosDevice() && !playing) {
+              toggleFullscreen()
+              return
+            }
+            if (!isLive) togglePlay()
           }}
         >
           {subtitleSrc ? (
@@ -1135,7 +1421,9 @@ export default function Player({
               <Typography variant="subtitle1" fontWeight={700}>
                 {liveStatus === 'reconnecting'
                   ? 'Reconectando canal…'
-                  : (isWaiting ? 'Buffering…' : loadPhaseLabel)}
+                  : (isSeeking
+                    ? 'Buscando posición…'
+                    : (isWaiting ? 'Buffering…' : loadPhaseLabel))}
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 2 }}>
                 {liveStatus === 'reconnecting'
@@ -1247,7 +1535,7 @@ export default function Player({
           </Typography>
         ) : (
           <Typography variant="body2" className="player-time" sx={{ minWidth: 96, fontVariantNumeric: 'tabular-nums' }}>
-            {formatTime(current)}
+            {formatTime(displayTime)}
             {` / ${totalDuration > 0 ? formatTime(totalDuration) : '--:--'}`}
           </Typography>
         )}
@@ -1266,8 +1554,11 @@ export default function Player({
               min={0}
               max={totalDuration > 0 ? totalDuration : 100}
               step={0.1}
-              value={Math.min(current, totalDuration > 0 ? totalDuration : current)}
-              onChange={(_, value) => seek(value)}
+              value={isScrubbing
+                ? scrubTime
+                : Math.min(current, totalDuration > 0 ? totalDuration : current)}
+              onChange={(_, value) => previewSeek(value)}
+              onChangeCommitted={(_, value) => commitSeek(value)}
               aria-label="Posición de reproducción"
               sx={{
                 '& .MuiSlider-rail': { opacity: 0.3 },
@@ -1289,6 +1580,16 @@ export default function Player({
           aria-label="Volumen"
           sx={{ width: { xs: 56, sm: 80 }, display: { xs: 'none', sm: 'block' } }}
         />
+        {isVodLike && typeof document !== 'undefined' && document.pictureInPictureEnabled ? (
+          <IconButton
+            onClick={togglePictureInPicture}
+            aria-label={isPip ? 'Salir de imagen en imagen' : 'Imagen en imagen'}
+            color="inherit"
+            size="small"
+          >
+            {isPip ? <PictureInPictureIcon /> : <PictureInPictureAltIcon />}
+          </IconButton>
+        ) : null}
         <IconButton
           onClick={toggleFullscreen}
           aria-label={isFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}

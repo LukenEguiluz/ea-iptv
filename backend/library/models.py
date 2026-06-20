@@ -53,6 +53,11 @@ class CatalogSyncState(models.Model):
     vod_count = models.PositiveIntegerField(default=0)
     series_count = models.PositiveIntegerField(default=0)
     error_message = models.TextField(blank=True, default='')
+    progress_percent = models.PositiveSmallIntegerField(default=0)
+    progress_phase = models.CharField(max_length=64, blank=True, default='')
+    progress_detail = models.CharField(max_length=256, blank=True, default='')
+    progress_last_error = models.CharField(max_length=256, blank=True, default='')
+    progress_retry_attempt = models.PositiveSmallIntegerField(default=0)
     updated_at = models.DateTimeField(auto_now=True)
 
 

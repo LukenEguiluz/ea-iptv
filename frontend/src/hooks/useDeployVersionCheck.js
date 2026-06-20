@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchDeployVersion } from '../utils/deployVersion'
+import { fetchDeployVersion, reloadAppWithFreshAssets } from '../utils/deployVersion'
 import { DEPLOY_CHECK_MS } from '../utils/refreshIntervals'
+
+const EMBEDDED_BUILD_VERSION = typeof __APP_BUILD_VERSION__ !== 'undefined'
+  ? String(__APP_BUILD_VERSION__)
+  : null
 
 export default function useDeployVersionCheck() {
   const [updateAvailable, setUpdateAvailable] = useState(false)
-  const loadedVersionRef = useRef(null)
+  const loadedVersionRef = useRef(EMBEDDED_BUILD_VERSION)
 
   const checkVersion = useCallback(async () => {
     const version = await fetchDeployVersion()
@@ -39,7 +43,7 @@ export default function useDeployVersionCheck() {
   }, [checkVersion])
 
   const reloadApp = useCallback(() => {
-    window.location.reload()
+    reloadAppWithFreshAssets()
   }, [])
 
   const dismissUpdate = useCallback(() => {

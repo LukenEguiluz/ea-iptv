@@ -12,18 +12,22 @@ export default function DeployUpdateDialog({ open, onReload, onDismiss }) {
   return (
     <Dialog
       open={open}
-      onClose={onDismiss}
+      onClose={(_, reason) => {
+        if (reason === 'backdropClick') return
+        onDismiss()
+      }}
+      disableEscapeKeyDown
       aria-labelledby="deploy-update-title"
       maxWidth="xs"
       fullWidth
     >
       <DialogTitle id="deploy-update-title" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <SystemUpdateAltIcon color="primary" />
-        Nueva versión disponible
+        Actualización disponible
       </DialogTitle>
       <DialogContent>
         <Typography color="text.secondary">
-          Se ha publicado una actualización de la aplicación. Recarga la página para usar la última versión.
+          Hay una nueva versión de la aplicación. Pulsa <strong>Recargar</strong> para descargar los cambios y que todo funcione correctamente.
         </Typography>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
@@ -31,7 +35,7 @@ export default function DeployUpdateDialog({ open, onReload, onDismiss }) {
           Más tarde
         </Button>
         <Button onClick={onReload} variant="contained" autoFocus>
-          Actualizar ahora
+          Recargar
         </Button>
       </DialogActions>
     </Dialog>

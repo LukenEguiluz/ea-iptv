@@ -63,6 +63,26 @@ def _item_payload(request, item: CatalogItem) -> dict:
     }
 
 
+def list_categories_from_index(content_type: str) -> list[dict]:
+    from django.db.models import Count
+
+    rows = (
+        CatalogItem.objects.filter(content_type=content_type)
+        .values('category_id', 'category_name')
+        .annotate(count=Count('id'))
+        .order_by('category_name')
+    )
+    return [
+        {
+            'category_id': row['category_id'],
+            'category_name': row['category_name'] or row['category_id'],
+            'parent_id': 0,
+        }
+        for row in rows
+        if row['category_id']
+    ]
+
+
 def list_catalog_from_index(
     request,
     *,

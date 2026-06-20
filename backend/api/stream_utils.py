@@ -291,11 +291,14 @@ def _append_transcode_output(
     has_audio = analysis.get('has_audio', bool(analysis.get('audio_codec')))
     video_ok = analysis.get('video_ok', _video_codec_ok(analysis.get('video_codec', '')))
 
+    cmd.extend(['-map', '0:v:0?'])
     if has_audio:
         if audio_stream_index is not None:
             cmd.extend(['-map', f'0:{audio_stream_index}?'])
         else:
             cmd.extend(['-map', '0:a:0?'])
+
+    cmd.extend(['-fflags', '+genpts', '-avoid_negative_ts', 'make_zero'])
 
     if video_ok:
         cmd.extend(['-c:v', 'copy'])
@@ -313,7 +316,13 @@ def _append_transcode_output(
     elif analysis.get('audio_ok'):
         cmd.extend(['-c:a', 'copy'])
     else:
-        cmd.extend(['-c:a', 'aac', '-b:a', '192k', '-ac', '2'])
+        cmd.extend([
+            '-af', 'aresample=async=1:first_pts=0',
+            '-c:a', 'aac',
+            '-b:a', '192k',
+            '-ac', '2',
+            '-ar', '48000',
+        ])
 
     if output is not None:
         if fragmented:
@@ -382,8 +391,9 @@ def ensure_browser_mp4(
         '-hide_banner',
         '-loglevel', 'error',
         '-user_agent', user_agent,
+        '-fflags', '+genpts',
+        '-avoid_negative_ts', 'make_zero',
         '-i', upstream_url,
-        '-map', '0:v:0',
     ]
     _append_transcode_output(
         cmd,
@@ -438,8 +448,9 @@ def _ffmpeg_transcode_cmd(
         '-hide_banner',
         '-loglevel', 'error',
         '-user_agent', user_agent,
+        '-fflags', '+genpts',
+        '-avoid_negative_ts', 'make_zero',
         '-i', upstream_url,
-        '-map', '0:v:0',
     ]
     _append_transcode_output(
         cmd,

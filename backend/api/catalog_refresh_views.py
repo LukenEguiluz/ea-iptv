@@ -26,7 +26,7 @@ class CatalogRefreshView(APIView):
         force = str(request.query_params.get('force', '')).lower() in ('1', 'true', 'yes')
         state = refresh_status_payload()
 
-        if state['status'] == 'running':
+        if state['status'] == 'running' and not (force and state.get('stale')):
             return Response(state, status=status.HTTP_202_ACCEPTED)
 
         if force or should_run_scheduled_sync():

@@ -1,4 +1,4 @@
-const API_BASE = '/api'
+import { API_BASE, resolveApiUrl } from './config'
 
 function getTokens() {
   const raw = localStorage.getItem('iptv_tokens')
@@ -141,7 +141,17 @@ export async function fetchPlayUrl(path) {
     const err = await response.json().catch(() => ({}))
     throw new Error(err.detail || 'No se pudo reproducir')
   }
-  return response.json()
+  const data = await response.json()
+  if (data.url) {
+    data.url = resolveApiUrl(data.url)
+  }
+  if (data.tracks?.subtitles) {
+    data.tracks.subtitles = data.tracks.subtitles.map((track) => ({
+      ...track,
+      url: resolveApiUrl(track.url),
+    }))
+  }
+  return data
 }
 
 export async function fetchPlayUrlWithAudio(basePath, audioIndex) {
@@ -200,7 +210,10 @@ export async function fetchSearchStatus() {
 export async function fetchCatalogRefresh() {
   const response = await apiFetch('/catalog/refresh')
   if (!response.ok) {
-    return { ready: false, status: 'unknown', counts: {}, version: null }
+    const detail = await response.text().catch(() => '')
+    const error = new Error(detail || `HTTP ${response.status}`)
+    error.status = response.status
+    throw error
   }
   return response.json()
 }
@@ -281,6 +294,8 @@ export async function clearViewHistory(contentType) {
   return response.json()
 }
 
+export { resolveApiUrl } from './config'
+
 export async function buildPlayerSession(item, options = {}) {
   const contentType = item.content_type || item.type
   const itemId = String(item.item_id || item.stream_id || item.series_id || '')
@@ -309,7 +324,7 @@ export async function buildPlayerSession(item, options = {}) {
     })
     return {
       title,
-      url: playData.url,
+      url: resolveApiUrl(playData.url),
       type: playData.type,
       epg: epgData,
       restored: Boolean(options.restored),
@@ -335,7 +350,7 @@ export async function buildPlayerSession(item, options = {}) {
   })
   return {
     title,
-    url: playData.url,
+    url: resolveApiUrl(playData.url),
     type: 'vod',
     durationHint: playData.duration_seconds || progress?.duration_seconds || 0,
     tracks: playData.tracks || null,

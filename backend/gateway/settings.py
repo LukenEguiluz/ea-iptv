@@ -127,6 +127,8 @@ else:
 
 CORS_ALLOW_CREDENTIALS = True
 
+GATEWAY_PUBLIC_URL = os.environ.get('GATEWAY_PUBLIC_URL', '').strip().rstrip('/')
+
 IPTV_ENCRYPTION_KEY = os.environ.get('IPTV_ENCRYPTION_KEY', '')
 
 XTREAM_SERVER_URL = os.environ.get('XTREAM_SERVER_URL', '').strip().rstrip('/')
@@ -134,22 +136,45 @@ if XTREAM_SERVER_URL and not XTREAM_SERVER_URL.startswith(('http://', 'https://'
     XTREAM_SERVER_URL = f'http://{XTREAM_SERVER_URL}'
 
 CATALOG_SYNC_INTERVAL_HOURS = float(os.environ.get('CATALOG_SYNC_INTERVAL_HOURS', '4'))
-CATALOG_SYNC_CATEGORY_WORKERS = int(os.environ.get('CATALOG_SYNC_CATEGORY_WORKERS', '10'))
-CATALOG_SYNC_ACCOUNT_WORKERS = int(os.environ.get('CATALOG_SYNC_ACCOUNT_WORKERS', '5'))
-CATALOG_SYNC_TYPE_WORKERS = int(os.environ.get('CATALOG_SYNC_TYPE_WORKERS', '3'))
+CATALOG_SYNC_CATEGORY_WORKERS = int(os.environ.get('CATALOG_SYNC_CATEGORY_WORKERS', '2'))
+CATALOG_SYNC_ACCOUNT_WORKERS = int(os.environ.get('CATALOG_SYNC_ACCOUNT_WORKERS', '1'))
+CATALOG_SYNC_TYPE_WORKERS = int(os.environ.get('CATALOG_SYNC_TYPE_WORKERS', '1'))
+CATALOG_SYNC_XTREAM_MAX_RETRIES = int(os.environ.get('CATALOG_SYNC_XTREAM_MAX_RETRIES', '20'))
+CATALOG_SYNC_XTREAM_RETRY_BACKOFF = os.environ.get('CATALOG_SYNC_XTREAM_RETRY_BACKOFF', '1,3,5')
+CATALOG_SYNC_XTREAM_CONNECT_TIMEOUT = float(os.environ.get('CATALOG_SYNC_XTREAM_CONNECT_TIMEOUT', '45'))
+CATALOG_SYNC_XTREAM_READ_TIMEOUT = float(os.environ.get('CATALOG_SYNC_XTREAM_READ_TIMEOUT', '120'))
 CATALOG_ENRICH_CAST_ON_SYNC = os.environ.get('CATALOG_ENRICH_CAST_ON_SYNC', 'true').lower() == 'true'
 CATALOG_ENRICH_BATCH_LIMIT = int(os.environ.get('CATALOG_ENRICH_BATCH_LIMIT', '300'))
 
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '[{levelname}] {asctime} {name}: {message}',
+            'style': '{',
+        },
+    },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
         },
     },
     'root': {
         'handlers': ['console'],
         'level': 'INFO',
+    },
+    'loggers': {
+        'library.catalog_sync': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'api.xtream': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
     },
 }

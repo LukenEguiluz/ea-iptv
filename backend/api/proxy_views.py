@@ -1,3 +1,7 @@
+import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
 import requests
 import shutil
 from django.contrib.auth import get_user_model
@@ -26,7 +30,10 @@ from .xtream import (
 )
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 STREAM_CHUNK = 64 * 1024
+LIVE_FIRST_BYTE_TIMEOUT = 10
+LIVE_PROXY_READ_TIMEOUT = 120
 PROVIDER_USER_AGENT = (
     'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 '
     '(KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3'
@@ -38,8 +45,8 @@ from .stream_utils import (
     ffmpeg_live_h264_stream,
     ffmpeg_subtitle_vtt_stream,
     file_range_response,
-    warm_browser_mp4_cache,
     live_needs_transcode,
+    warm_browser_mp4_cache,
 )
 
 SERIES_EXTENSIONS = ('mkv', 'mp4', 'ts')
@@ -111,19 +118,141 @@ def _proxy_response(upstream: requests.Response, extra_headers: dict | None = No
         for key, value in extra_headers.items():
             response[key] = value
 
+    if 'Accept-Ranges' not in response and upstream.status_code in (200, 206):
+        response['Accept-Ranges'] = 'bytes'
+
     response['Cache-Control'] = 'no-cache, no-transform'
     response['X-Accel-Buffering'] = 'no'
     return response
 
 
 def _fetch_upstream(url: str, request, *, kind: str = '') -> requests.Response:
+    read_timeout = LIVE_PROXY_READ_TIMEOUT if kind == 'live' else 120
     return requests.get(
         url,
         headers=_upstream_headers(request, kind=kind),
         stream=True,
-        timeout=(10, 120),
+        timeout=(10, read_timeout),
         allow_redirects=True,
     )
+
+
+def _proxy_live_passthrough(
+    upstream_url: str,
+    request,
+    *,
+    stream_id: str | int | None = None,
+    user_id: int | None = None,
+):
+    """Proxy live TS con streaming real, timeout al primer byte y logging diagnóstico."""
+    started_at = time.monotonic()
+    safe_url = upstream_url if len(upstream_url) <= 120 else f'{upstream_url[:120]}…'
+    logger.info(
+        'live_proxy start url=%s stream_id=%s user_id=%s',
+        safe_url,
+        stream_id,
+        user_id,
+    )
+
+    try:
+        upstream = _fetch_upstream(upstream_url, request, kind='live')
+    except requests.RequestException as exc:
+        elapsed_ms = int((time.monotonic() - started_at) * 1000)
+        logger.warning(
+            'live_proxy connect_failed url=%s error=%s elapsed_ms=%s',
+            safe_url,
+            exc,
+            elapsed_ms,
+        )
+        return Response(
+            {
+                'detail': f'No se pudo conectar al canal en vivo: {exc}',
+                'code': 'live_connect_failed',
+            },
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    if upstream.status_code not in (200, 206):
+        elapsed_ms = int((time.monotonic() - started_at) * 1000)
+        logger.warning(
+            'live_proxy upstream_error url=%s status=%s elapsed_ms=%s',
+            safe_url,
+            upstream.status_code,
+            elapsed_ms,
+        )
+        upstream.close()
+        return _upstream_error_response(upstream)
+
+    iterator = upstream.iter_content(chunk_size=STREAM_CHUNK)
+
+    def read_first_chunk():
+        for chunk in iterator:
+            if chunk:
+                return chunk
+        return None
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(read_first_chunk)
+        try:
+            first_chunk = future.result(timeout=LIVE_FIRST_BYTE_TIMEOUT)
+        except FuturesTimeoutError:
+            upstream.close()
+            elapsed_ms = int((time.monotonic() - started_at) * 1000)
+            logger.warning(
+                'live_proxy first_byte_timeout url=%s timeout_s=%s elapsed_ms=%s',
+                safe_url,
+                LIVE_FIRST_BYTE_TIMEOUT,
+                elapsed_ms,
+            )
+            return Response(
+                {
+                    'detail': 'El proveedor no envió datos del canal a tiempo. Intenta de nuevo.',
+                    'code': 'live_first_byte_timeout',
+                },
+                status=status.HTTP_504_GATEWAY_TIMEOUT,
+            )
+
+    if not first_chunk:
+        upstream.close()
+        elapsed_ms = int((time.monotonic() - started_at) * 1000)
+        logger.warning(
+            'live_proxy empty_stream url=%s elapsed_ms=%s',
+            safe_url,
+            elapsed_ms,
+        )
+        return Response(
+            {
+                'detail': 'El proveedor devolvió un stream vacío.',
+                'code': 'live_empty_stream',
+            },
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    first_byte_ms = int((time.monotonic() - started_at) * 1000)
+    logger.info(
+        'live_proxy first_byte url=%s first_byte_ms=%s bytes=%s',
+        safe_url,
+        first_byte_ms,
+        len(first_chunk),
+    )
+
+    def stream():
+        try:
+            yield first_chunk
+            for chunk in iterator:
+                if chunk:
+                    yield chunk
+        finally:
+            upstream.close()
+
+    response = StreamingHttpResponse(
+        stream(),
+        status=upstream.status_code,
+        content_type='video/mp2t',
+    )
+    response['Cache-Control'] = 'no-cache, no-transform'
+    response['X-Accel-Buffering'] = 'no'
+    return response
 
 
 def _resolve_play_upstream(user, payload: dict) -> str:
@@ -249,13 +378,20 @@ class StreamPlayProxyView(APIView):
                 audio_stream_index = int(audio_stream_index)
             upstream_url = _resolve_play_upstream(user, payload)
             client_decode = _client_decode_requested(request)
-            if (
-                stream_kind == 'live'
-                and not client_decode
-                and shutil.which('ffmpeg')
-                and live_needs_transcode(upstream_url, PROVIDER_USER_AGENT)
-            ):
-                return ffmpeg_live_h264_stream(upstream_url, PROVIDER_USER_AGENT)
+            if stream_kind == 'live' and not client_decode:
+                if shutil.which('ffmpeg') and live_needs_transcode(upstream_url, PROVIDER_USER_AGENT):
+                    logger.info(
+                        'live_proxy transcode_start stream_id=%s user_id=%s',
+                        payload.get('id'),
+                        user.pk,
+                    )
+                    return ffmpeg_live_h264_stream(upstream_url, PROVIDER_USER_AGENT)
+                return _proxy_live_passthrough(
+                    upstream_url,
+                    request,
+                    stream_id=payload.get('id'),
+                    user_id=user.pk,
+                )
             if stream_kind in ('vod', 'series') and not client_decode:
                 processed = _serve_browser_compatible(
                     upstream_url,
@@ -292,6 +428,7 @@ class StreamPlayProxyView(APIView):
                     password=password,
                     server=_server_url(),
                     kind=payload['kind'],
+                    request=request,
                 )
                 return HttpResponse(
                     rewritten,
@@ -334,7 +471,7 @@ class StreamSegmentProxyView(APIView):
             try:
                 user_id = payload['uid']
                 manifest = upstream.text
-                rewritten = rewrite_m3u8(manifest, url, user_id)
+                rewritten = rewrite_m3u8(manifest, url, user_id, request=request)
                 return HttpResponse(
                     rewritten,
                     status=upstream.status_code,

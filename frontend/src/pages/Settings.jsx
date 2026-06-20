@@ -6,6 +6,7 @@ import {
   Chip,
   CircularProgress,
   IconButton,
+  LinearProgress,
   Paper,
   Stack,
   Table,
@@ -21,7 +22,7 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy'
 import ErrorOutlinedIcon from '@mui/icons-material/ErrorOutlined'
 import PlayCircleOutlinedIcon from '@mui/icons-material/PlayCircleOutlined'
 import SyncIcon from '@mui/icons-material/Sync'
-import { fetchCatalogRefresh, fetchDiagnostics } from '../api'
+import { fetchDiagnostics } from '../api'
 import { useCatalogRefresh } from '../context/CatalogRefreshContext'
 import LoadingState from '../components/LoadingState'
 import PageShell from '../components/PageShell'
@@ -36,32 +37,45 @@ const CHECK_LABELS = {
   series: 'Series',
 }
 
+const STATUS_LABELS = {
+  ready: 'Listo',
+  running: 'Sincronizando',
+  error: 'Error',
+  idle: 'Pendiente',
+}
+
+function formatCatalogCounts(counts) {
+  if (!counts) return ''
+  const parts = []
+  if (counts.vod) parts.push(`${counts.vod.toLocaleString()} películas`)
+  if (counts.series) parts.push(`${counts.series.toLocaleString()} series`)
+  if (counts.live) parts.push(`${counts.live.toLocaleString()} canales`)
+  return parts.join(' · ')
+}
+
 export default function Settings() {
-  const { runCatalogRefresh } = useCatalogRefresh()
+  const { catalogStatus, runCatalogRefresh } = useCatalogRefresh()
   const [report, setReport] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [catalogStatus, setCatalogStatus] = useState(null)
   const [refreshingCatalog, setRefreshingCatalog] = useState(false)
   const [catalogError, setCatalogError] = useState('')
 
-  async function loadCatalogStatus() {
-    try {
-      const data = await fetchCatalogRefresh()
-      setCatalogStatus(data)
-    } catch {
-      setCatalogStatus(null)
-    }
-  }
+  const isSyncRunning = catalogStatus?.status === 'running'
+  const progressPercent = isSyncRunning
+    ? (catalogStatus?.progress_percent ?? 0)
+    : catalogStatus?.status === 'ready'
+      ? 100
+      : 0
 
   async function refreshCatalogNow() {
     setRefreshingCatalog(true)
     setCatalogError('')
     try {
-      await runCatalogRefresh()
-      await loadCatalogStatus()
+      await runCatalogRefresh({ force: true })
     } catch (err) {
       setCatalogError(err.message)
+      console.error('[IPTV Catálogo]', err.message, err)
     } finally {
       setRefreshingCatalog(false)
     }
@@ -94,23 +108,65 @@ export default function Settings() {
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
           <Button
             variant="outlined"
-            startIcon={refreshingCatalog ? <CircularProgress size={18} /> : <SyncIcon />}
-            onClick={() => {
-              loadCatalogStatus()
-              refreshCatalogNow()
-            }}
-            disabled={refreshingCatalog}
+            startIcon={refreshingCatalog || isSyncRunning ? <CircularProgress size={18} /> : <SyncIcon />}
+            onClick={refreshCatalogNow}
+            disabled={refreshingCatalog || isSyncRunning}
           >
-            {refreshingCatalog ? 'Sincronizando…' : 'Actualizar catálogo ahora'}
+            {refreshingCatalog || isSyncRunning ? 'Sincronizando…' : 'Actualizar catálogo ahora'}
           </Button>
           {catalogStatus ? (
             <Chip
               size="small"
-              label={`Estado: ${catalogStatus.status}${catalogStatus.counts?.vod ? ` · ${catalogStatus.counts.vod} películas` : ''}`}
-              color={catalogStatus.status === 'ready' ? 'success' : catalogStatus.status === 'running' ? 'warning' : 'default'}
+              label={`Estado: ${STATUS_LABELS[catalogStatus.status] || catalogStatus.status}${catalogStatus.counts?.vod ? ` · ${catalogStatus.counts.vod.toLocaleString()} películas` : ''}`}
+              color={catalogStatus.status === 'ready' ? 'success' : catalogStatus.status === 'running' ? 'warning' : catalogStatus.status === 'error' ? 'error' : 'default'}
             />
           ) : null}
         </Stack>
+
+        {catalogStatus && (isSyncRunning || catalogStatus.status === 'ready' || catalogStatus.status === 'error') ? (
+          <Box sx={{ mt: 2 }}>
+            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 0.5 }}>
+              <Typography variant="body2" color="text.secondary">
+                {isSyncRunning
+                  ? (catalogStatus.progress_phase || 'Sincronizando catálogo…')
+                  : catalogStatus.status === 'ready'
+                    ? 'Catálogo actualizado'
+                    : 'Sincronización detenida'}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {progressPercent}%
+              </Typography>
+            </Stack>
+            <LinearProgress
+              variant={isSyncRunning && progressPercent === 0 && catalogStatus.progress_last_error ? 'indeterminate' : 'determinate'}
+              value={progressPercent}
+              color={catalogStatus.status === 'error' ? 'error' : 'primary'}
+              sx={{ height: 8, borderRadius: 1 }}
+            />
+            {catalogStatus.progress_detail ? (
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: 'block' }}>
+                {catalogStatus.progress_detail}
+              </Typography>
+            ) : null}
+            {catalogStatus.progress_last_error ? (
+              <Typography variant="caption" color="warning.main" sx={{ mt: 0.5, display: 'block' }}>
+                {catalogStatus.progress_last_error}
+                {catalogStatus.progress_retry_attempt
+                  ? ` (intento ${catalogStatus.progress_retry_attempt})`
+                  : ''}
+              </Typography>
+            ) : null}
+            {catalogStatus.status === 'ready' && catalogStatus.counts ? (
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: 'block' }}>
+                {formatCatalogCounts(catalogStatus.counts)}
+              </Typography>
+            ) : null}
+          </Box>
+        ) : null}
+
+        {catalogStatus?.error ? (
+          <Alert severity="error" sx={{ mt: 2 }}>{catalogStatus.error}</Alert>
+        ) : null}
         {catalogError ? <Alert severity="error" sx={{ mt: 2 }}>{catalogError}</Alert> : null}
       </Paper>
 

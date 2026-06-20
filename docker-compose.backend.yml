@@ -1,3 +1,8 @@
+# Solo backend + PostgreSQL (frontend en Vercel u otro host).
+# Uso: docker compose -f docker-compose.backend.yml up -d --build
+#
+# Expone API en :8000 — pon nginx/Caddy delante con HTTPS y define GATEWAY_PUBLIC_URL en .env
+
 services:
   db:
     image: postgres:16-alpine
@@ -28,7 +33,7 @@ services:
       POSTGRES_USER: iptv_gateway
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-iptv_gateway_secret}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-change-in-production}
-      DEBUG: ${DEBUG:-True}
+      DEBUG: ${DEBUG:-False}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
       CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
@@ -57,30 +62,11 @@ services:
       DJANGO_SUPERUSER_USERNAME: ${DJANGO_SUPERUSER_USERNAME:-}
       DJANGO_SUPERUSER_EMAIL: ${DJANGO_SUPERUSER_EMAIL:-}
       DJANGO_SUPERUSER_PASSWORD: ${DJANGO_SUPERUSER_PASSWORD:-}
+    ports:
+      - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
-    expose:
-      - "8000"
-
-  nginx:
-    image: nginx:1.27-alpine
-    ports:
-      - "8080:80"
-    volumes:
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
-    depends_on:
-      - backend
-      - frontend
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        BUILD_VERSION: ${BUILD_VERSION:-}
-    expose:
-      - "80"
 
 volumes:
   postgres_data:

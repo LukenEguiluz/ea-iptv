@@ -2,6 +2,7 @@ import os
 import re
 from urllib.parse import quote, urljoin, urlparse
 
+from django.conf import settings
 from django.core import signing
 
 IMAGE_FIELDS = ('stream_icon', 'cover', 'cover_big')
@@ -22,6 +23,16 @@ def _is_http_url(value: str | None) -> bool:
 
 def _token_query(token: str) -> str:
     return f't={quote(token, safe="")}'
+
+
+def _public_api_url(path: str, request=None) -> str:
+    path = path if path.startswith('/') else f'/{path}'
+    public = getattr(settings, 'GATEWAY_PUBLIC_URL', '').strip().rstrip('/')
+    if public:
+        return f'{public}{path}'
+    if request is not None:
+        return request.build_absolute_uri(path)
+    return path
 
 
 def make_play_token(
@@ -94,7 +105,7 @@ def proxy_play_url(
     audio_index: int | None = None,
 ) -> str:
     token = make_play_token(user.pk, kind, stream_id, ext, audio_index=audio_index)
-    return f'/api/proxy/play?{_token_query(token)}'
+    return _public_api_url(f'/api/proxy/play?{_token_query(token)}', request)
 
 
 def proxy_subtitle_url(
@@ -106,12 +117,12 @@ def proxy_subtitle_url(
     sub_index: int,
 ) -> str:
     token = make_subtitle_token(user.pk, kind, stream_id, ext, sub_index)
-    return f'/api/proxy/subtitle?{_token_query(token)}'
+    return _public_api_url(f'/api/proxy/subtitle?{_token_query(token)}', request)
 
 
 def proxy_media_url(request, original_url: str) -> str:
     token = make_media_token(original_url)
-    return f'/api/proxy/media?{_token_query(token)}'
+    return _public_api_url(f'/api/proxy/media?{_token_query(token)}', request)
 
 
 def rewrite_media_field(request, value: str | None) -> str | None:
@@ -146,9 +157,9 @@ def rewrite_series_info(request, data: dict) -> dict:
     return data
 
 
-def _segment_proxy_path(user_id: int, upstream_url: str) -> str:
+def _segment_proxy_path(user_id: int, upstream_url: str, request=None) -> str:
     token = make_segment_token(user_id, upstream_url)
-    return f'/api/proxy/segment?{_token_query(token)}'
+    return _public_api_url(f'/api/proxy/segment?{_token_query(token)}', request)
 
 
 def _resolve_live_segment_url(
@@ -174,6 +185,7 @@ def rewrite_m3u8(
     password: str | None = None,
     server: str | None = None,
     kind: str = 'live',
+    request=None,
 ) -> str:
     lines = []
     use_live_rewrite = kind == 'live' and username and password and server
@@ -188,7 +200,7 @@ def rewrite_m3u8(
                     absolute = _resolve_live_segment_url(original, base_url, server, username, password)
                 else:
                     absolute = urljoin(base_url, original)
-                proxy = _segment_proxy_path(user_id, absolute)
+                proxy = _segment_proxy_path(user_id, absolute, request)
                 lines.append(stripped.replace(original, proxy))
                 continue
             lines.append(line)
@@ -199,6 +211,6 @@ def rewrite_m3u8(
         else:
             absolute = urljoin(base_url, stripped)
 
-        lines.append(_segment_proxy_path(user_id, absolute))
+        lines.append(_segment_proxy_path(user_id, absolute, request))
 
     return '\n'.join(lines) + '\n'

@@ -1,9 +1,12 @@
 from django.conf import settings
+import logging
 import time
 
 import requests
 
 from sessions.services import SessionError, get_current_session, start_session
+
+logger = logging.getLogger(__name__)
 
 _CACHE_TTL_SECONDS = 600
 _cache: dict[tuple, tuple[float, object]] = {}
@@ -30,6 +33,46 @@ def _player_api_url() -> str:
     return f'{_server_url()}/player_api.php'
 
 
+def _parse_retry_backoff(raw: str | None, default: tuple[float, ...]) -> tuple[float, ...]:
+    if not raw:
+        return default
+    values: list[float] = []
+    for part in raw.split(','):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            values.append(max(0.0, float(part)))
+        except ValueError:
+            continue
+    return tuple(values) if values else default
+
+
+def _request_timeout(default: float | tuple[float, float] = 60) -> float | tuple[float, float]:
+    connect = float(getattr(settings, 'CATALOG_SYNC_XTREAM_CONNECT_TIMEOUT', 30))
+    read = float(getattr(settings, 'CATALOG_SYNC_XTREAM_READ_TIMEOUT', 120))
+    if connect > 0 and read > 0:
+        return (connect, read)
+    return default
+
+
+def _retry_backoff_seconds() -> tuple[float, ...]:
+    raw = getattr(settings, 'CATALOG_SYNC_XTREAM_RETRY_BACKOFF', '1,3,5')
+    return _parse_retry_backoff(raw, (1.0, 3.0, 5.0))
+
+
+def _retry_delay(attempt: int, backoff: tuple[float, ...]) -> float:
+    if not backoff:
+        return 1.0
+    index = min(attempt, len(backoff) - 1)
+    return backoff[index]
+
+
+def _max_retries_for_sync() -> int | None:
+    configured = int(getattr(settings, 'CATALOG_SYNC_XTREAM_MAX_RETRIES', -1))
+    return None if configured < 0 else configured
+
+
 def ensure_session(user, ip_address: str | None = None):
     session = get_current_session(user.username)
     if session is None:
@@ -54,7 +97,18 @@ def xtream_request(user, action: str, ip_address: str | None = None, **params):
     return xtream_raw_request(username, password, action, **params)
 
 
-def xtream_raw_request(username: str, password: str, action: str, *, use_cache: bool = True, **params):
+def xtream_raw_request(
+    username: str,
+    password: str,
+    action: str,
+    *,
+    use_cache: bool = True,
+    max_retries: int | None = 0,
+    retry_backoff: tuple[float, ...] | None = None,
+    timeout: float | tuple[float, float] | None = None,
+    on_retry=None,
+    **params,
+):
     cache_key = (username, action, tuple(sorted((k, str(v)) for k, v in params.items())))
     if use_cache:
         cached = _cache.get(cache_key)
@@ -70,23 +124,64 @@ def xtream_raw_request(username: str, password: str, action: str, *, use_cache: 
         'action': action,
         **params,
     }
-    try:
-        response = requests.get(_player_api_url(), params=query, timeout=60)
-        response.raise_for_status()
-    except requests.RequestException as exc:
-        raise XtreamError(f'Error al conectar con Xtream: {exc}', code='xtream_connection_error') from exc
+    request_timeout = timeout if timeout is not None else 60
+    backoff = retry_backoff or _retry_backoff_seconds()
+    attempt = 0
 
-    try:
-        data = response.json()
-    except ValueError as exc:
-        raise XtreamError('Respuesta inválida del servidor Xtream.', code='xtream_invalid_response') from exc
+    while True:
+        try:
+            response = requests.get(_player_api_url(), params=query, timeout=request_timeout)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            if max_retries is not None and attempt >= max_retries:
+                raise XtreamError(f'Error al conectar con Xtream: {exc}', code='xtream_connection_error') from exc
+            delay = _retry_delay(attempt, backoff)
+            if on_retry:
+                on_retry(attempt + 1, delay, exc)
+            logger.warning(
+                'Xtream %s intento %s falló (%s); reintento en %.1fs',
+                action,
+                attempt + 1,
+                exc,
+                delay,
+            )
+            time.sleep(delay)
+            attempt += 1
+            continue
 
-    if isinstance(data, dict) and data.get('user_info', {}).get('auth') == 0:
-        raise XtreamError('Credenciales Xtream rechazadas.', code='xtream_auth_failed')
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise XtreamError('Respuesta inválida del servidor Xtream.', code='xtream_invalid_response') from exc
 
-    if use_cache:
-        _cache[cache_key] = (time.time() + _CACHE_TTL_SECONDS, data)
-    return data
+        if isinstance(data, dict) and data.get('user_info', {}).get('auth') == 0:
+            raise XtreamError('Credenciales Xtream rechazadas.', code='xtream_auth_failed')
+
+        if use_cache:
+            _cache[cache_key] = (time.time() + _CACHE_TTL_SECONDS, data)
+        return data
+
+
+def xtream_sync_request(
+    username: str,
+    password: str,
+    action: str,
+    *,
+    on_retry=None,
+    **params,
+):
+    """Petición Xtream para sincronización: reintenta sin límite hasta obtener respuesta."""
+    return xtream_raw_request(
+        username,
+        password,
+        action,
+        use_cache=False,
+        max_retries=_max_retries_for_sync(),
+        retry_backoff=_retry_backoff_seconds(),
+        timeout=_request_timeout(),
+        on_retry=on_retry,
+        **params,
+    )
 
 
 def live_stream_url(username: str, password: str, stream_id: str | int) -> str:

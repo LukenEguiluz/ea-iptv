@@ -1,6 +1,7 @@
 import { createPlayer } from 'avbridge'
 
 const LOG_PREFIX = '[IPTV Avbridge]'
+const SEEK_CACHE_BYTES = 32 * 1024 * 1024
 
 export function logAvbridge(phase, message, data = {}) {
   console.info(LOG_PREFIX, message, {
@@ -42,8 +43,33 @@ export function stripClientDecode(url) {
     .replace(/[?&]$/, '')
 }
 
-export function shouldUseAvbridgeForVod(playbackUrl, isVodLike) {
-  return Boolean(isVodLike && playbackUrl.includes('/api/proxy/play'))
+const SERVER_FIRST_CONTAINERS = new Set([
+  'mkv', 'avi', 'wmv', 'flv', 'ts', 'm2ts', 'mpeg', 'mpg', 'webm',
+])
+
+function withTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error(`${label} superó ${Math.round(ms / 1000)}s`))
+    }, ms)
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer)
+        resolve(value)
+      },
+      (err) => {
+        window.clearTimeout(timer)
+        reject(err)
+      },
+    )
+  })
+}
+
+export function shouldUseAvbridgeForVod(playbackUrl, isVodLike, ext = '') {
+  if (!isVodLike || !playbackUrl.includes('/api/proxy/play')) return false
+  const container = String(ext || '').toLowerCase().replace(/^\./, '')
+  if (SERVER_FIRST_CONTAINERS.has(container)) return false
+  return true
 }
 
 /**
@@ -53,6 +79,11 @@ export async function attachAvbridgePlayer(video, sourceUrl, {
   resumeAt = 0,
   initialMuted = false,
   context = {},
+  onTracks,
+  onTimeUpdate,
+  onStrategyChange,
+  onError,
+  onStall,
 } = {}) {
   logAvbridge('init', 'Iniciando avbridge', { sourceUrl, resumeAt, initialMuted, context })
 
@@ -67,6 +98,8 @@ export async function attachAvbridgePlayer(video, sourceUrl, {
     source: sourceUrl,
     target: video,
     autoEscalate: true,
+    backgroundBehavior: 'continue',
+    cacheBytes: SEEK_CACHE_BYTES,
     requestInit: {
       credentials: 'same-origin',
     },
@@ -101,6 +134,7 @@ export async function attachAvbridgePlayer(video, sourceUrl, {
   })
 
   const unsubscribers = []
+  let audioTracksList = []
 
   const bind = (event, handler) => {
     const unsub = player.on(event, handler)
@@ -122,21 +156,45 @@ export async function attachAvbridgePlayer(video, sourceUrl, {
       diagnostics: player.getDiagnostics(),
       context,
     })
+    onStrategyChange?.(payload)
   })
 
   bind('tracks', (payload) => {
+    audioTracksList = payload.audio || []
     logAvbridge('tracks', 'Pistas detectadas', {
       video: payload.video?.length || 0,
-      audio: payload.audio?.length || 0,
+      audio: audioTracksList.length,
       subtitle: payload.subtitle?.length || 0,
       payload,
       context,
     })
+    onTracks?.(payload)
+    if (audioTracksList.length > 0) {
+      player.setAudioTrack(audioTracksList[0].id).catch((err) => {
+        logAvbridgeWarn('tracks', 'No se pudo fijar pista de audio por defecto', {
+          error: err?.message,
+        })
+      })
+    }
   })
 
+  let lastLoggedSecond = -1
+  let stallTimer = null
+  let sawPlaybackProgress = false
+
   bind('timeupdate', (payload) => {
-    if (Math.floor(payload.currentTime) % 30 === 0) {
-      logAvbridge('timeupdate', `Posición ~${Math.floor(payload.currentTime)}s`, {
+    onTimeUpdate?.(payload)
+    if (payload.currentTime > 0.25) {
+      sawPlaybackProgress = true
+      if (stallTimer) {
+        window.clearTimeout(stallTimer)
+        stallTimer = null
+      }
+    }
+    const second = Math.floor(payload.currentTime)
+    if (second > 0 && second % 30 === 0 && second !== lastLoggedSecond) {
+      lastLoggedSecond = second
+      logAvbridge('timeupdate', `Posición ~${second}s`, {
         currentTime: payload.currentTime,
         strategy: player.getDiagnostics()?.strategy,
       })
@@ -152,6 +210,21 @@ export async function attachAvbridgePlayer(video, sourceUrl, {
       diagnostics: player.getDiagnostics(),
       context,
     })
+    if (stallTimer) window.clearTimeout(stallTimer)
+    stallTimer = window.setTimeout(() => {
+      if (!sawPlaybackProgress) {
+        logAvbridgeWarn('stall', 'Sin avance tras estar listo', {
+          videoState: {
+            paused: video.paused,
+            currentTime: video.currentTime,
+            readyState: video.readyState,
+            networkState: video.networkState,
+          },
+          diagnostics: player.getDiagnostics(),
+        })
+        onStall?.({ reason: 'sin avance tras ready' })
+      }
+    }, 20000)
   })
 
   bind('error', (err) => {
@@ -160,6 +233,7 @@ export async function attachAvbridgePlayer(video, sourceUrl, {
       diagnostics: player.getDiagnostics(),
       context,
     })
+    onError?.(err)
   })
 
   const diagTimer = window.setInterval(() => {
@@ -194,7 +268,7 @@ export async function attachAvbridgePlayer(video, sourceUrl, {
 
   const tryPlay = async (muted) => {
     video.muted = muted
-    await player.play()
+    await withTimeout(player.play(), 20000, 'play()')
     logAvbridge('play', muted ? 'Play OK (mute)' : 'Play OK', { diagnostics: player.getDiagnostics() })
   }
 
@@ -216,10 +290,17 @@ export async function attachAvbridgePlayer(video, sourceUrl, {
 
   return {
     player,
+    play: () => player.play(),
+    pause: () => player.pause(),
+    seek: (seconds) => player.seek(seconds),
+    setAudioTrack: (id) => player.setAudioTrack(id),
+    getAudioTracks: () => audioTracksList,
     destroy: async () => {
       logAvbridge('destroy', 'Destruyendo sesión avbridge', { context })
+      if (stallTimer) window.clearTimeout(stallTimer)
       window.clearInterval(diagTimer)
       unsubscribers.forEach((fn) => fn())
+      audioTracksList = []
       await player.destroy()
     },
   }
