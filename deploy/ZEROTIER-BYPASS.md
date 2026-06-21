@@ -67,7 +67,15 @@ Comprobar desde el nodo:
 curl -m 15 'http://line.trxdnscloud.ru/player_api.php?username=USER&password=PASS&action=get_live_categories' | head -c 200
 ```
 
-### Windows (`10.234.232.218`) — Docker (recomendado)
+### Windows (`10.234.232.218`) — Python en el host (recomendado)
+
+Evita problemas de red de Docker. Doble clic en **`Iniciar-Bypass-Python.bat`** (requiere Python 3).
+
+El tráfico a Xtream sale con la IP residencial del PC. URL del proveedor **sin puerto**:
+
+`http://line.trxdnscloud.ru/player_api.php`
+
+### Windows — Docker (alternativa)
 
 Carpeta lista para copiar al PC: **`deploy/windows-bypass/`**
 
