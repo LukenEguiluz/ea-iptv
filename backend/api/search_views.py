@@ -19,12 +19,24 @@ class CatalogSearchView(APIView):
         content_type = request.query_params.get('type', '').strip().lower() or None
         limit = request.query_params.get('limit', '40')
 
-        if not sync_status_payload()['ready']:
+        payload = sync_status_payload()
+        if content_type:
+            type_key = content_type if content_type in ('live', 'vod', 'series') else None
+            if type_key and not payload['ready_by_type'].get(type_key):
+                return Response(
+                    {
+                        'detail': f'El índice de {type_key} aún no está listo. Sincronízalo desde la sección correspondiente.',
+                        'code': 'search_not_ready',
+                        'sync': payload,
+                    },
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+        elif not payload['ready']:
             return Response(
                 {
-                    'detail': 'El índice de búsqueda se está preparando. Intenta de nuevo en unos minutos.',
+                    'detail': 'El índice de TV en vivo se está preparando. Intenta de nuevo en unos minutos.',
                     'code': 'search_not_ready',
-                    'sync': sync_status_payload(),
+                    'sync': payload,
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )

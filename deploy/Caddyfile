@@ -1,0 +1,27 @@
+# HTTPS reverse proxy para el backend Django (Gunicorn :8000).
+# El frontend en Vercel (ea-iptv.leyluz.com) llama a esta API con CORS.
+
+api.ea-iptv.leyluz.com {
+	encode gzip
+
+	# Streams / proxy: sin buffer, timeouts largos
+	@streaming path /api/proxy/*
+	handle @streaming {
+		reverse_proxy backend:8000 {
+			flush_interval -1
+			transport http {
+				read_timeout 10m
+				write_timeout 10m
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy backend:8000 {
+			transport http {
+				read_timeout 5m
+				write_timeout 5m
+			}
+		}
+	}
+}

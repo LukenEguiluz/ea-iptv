@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from library.catalog_sync import should_run_scheduled_sync, sync_catalog_index, sync_status_payload
+from library.catalog_sync import parse_content_types, should_run_scheduled_sync, sync_catalog_index, sync_status_payload
 
 
 def refresh_status_payload() -> dict:
@@ -24,15 +24,30 @@ class CatalogRefreshView(APIView):
 
     def post(self, request):
         force = str(request.query_params.get('force', '')).lower() in ('1', 'true', 'yes')
+        types_raw = request.query_params.get('types', '')
+        if not types_raw and isinstance(request.data, dict):
+            body_types = request.data.get('types')
+            if body_types is not None:
+                types_raw = body_types
+        content_types = parse_content_types(types_raw) if types_raw else None
         state = refresh_status_payload()
 
         if state['status'] == 'running' and not (force and state.get('stale')):
             return Response(state, status=status.HTTP_202_ACCEPTED)
 
-        if force or should_run_scheduled_sync():
+        is_live_only = content_types is None or content_types == ('live',)
+        should_sync = force or (
+            is_live_only and should_run_scheduled_sync()
+        ) or (
+            content_types is not None and not is_live_only
+        )
+
+        if should_sync:
+            selected = content_types
+
             def run_sync():
                 try:
-                    sync_catalog_index(force=True)
+                    sync_catalog_index(force=True, content_types=selected)
                 except Exception:
                     pass
 

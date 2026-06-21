@@ -218,8 +218,11 @@ export async function fetchCatalogRefresh() {
   return response.json()
 }
 
-export async function triggerCatalogRefresh(force = false) {
-  const query = force ? '?force=1' : ''
+export async function triggerCatalogRefresh(force = false, types = null) {
+  const params = new URLSearchParams()
+  if (force) params.set('force', '1')
+  if (types?.length) params.set('types', types.join(','))
+  const query = params.toString() ? `?${params.toString()}` : ''
   const response = await apiFetch(`/catalog/refresh${query}`, { method: 'POST', body: '{}' })
   const data = await response.json().catch(() => ({}))
   if (!response.ok && response.status !== 202) {

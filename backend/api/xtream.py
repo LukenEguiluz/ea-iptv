@@ -1,5 +1,6 @@
 from django.conf import settings
 import logging
+import threading
 import time
 
 import requests
@@ -10,6 +11,39 @@ logger = logging.getLogger(__name__)
 
 _CACHE_TTL_SECONDS = 600
 _cache: dict[tuple, tuple[float, object]] = {}
+
+# User-Agent de STB (MAG) — lo esperan la mayoría de paneles Xtream.
+PROVIDER_USER_AGENT = (
+    'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 '
+    '(KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3'
+)
+
+_thread_local = threading.local()
+
+
+def xtream_request_headers() -> dict[str, str]:
+    server = getattr(settings, 'XTREAM_SERVER_URL', '').strip().rstrip('/')
+    if server and not server.startswith(('http://', 'https://')):
+        server = f'http://{server}'
+    return {
+        'User-Agent': PROVIDER_USER_AGENT,
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,*',
+        'Connection': 'keep-alive',
+        'Referer': f'{server}/',
+    }
+
+
+def _xtream_session() -> requests.Session:
+    session = getattr(_thread_local, 'xtream_session', None)
+    if session is None:
+        session = requests.Session()
+        session.headers.update(xtream_request_headers())
+        proxy = getattr(settings, 'XTREAM_HTTP_PROXY', '').strip()
+        if proxy:
+            session.proxies.update({'http': proxy, 'https': proxy})
+        _thread_local.xtream_session = session
+    return session
 
 
 class XtreamError(Exception):
@@ -130,7 +164,12 @@ def xtream_raw_request(
 
     while True:
         try:
-            response = requests.get(_player_api_url(), params=query, timeout=request_timeout)
+            response = _xtream_session().get(
+                _player_api_url(),
+                params=query,
+                timeout=request_timeout,
+                headers=xtream_request_headers(),
+            )
             response.raise_for_status()
         except requests.RequestException as exc:
             if max_retries is not None and attempt >= max_retries:
@@ -194,6 +233,32 @@ def vod_stream_url(username: str, password: str, stream_id: str | int, ext: str 
 
 def series_stream_url(username: str, password: str, episode_id: str | int, ext: str = 'mp4') -> str:
     return f'{_server_url()}/series/{username}/{password}/{episode_id}.{ext.lstrip(".")}'
+
+
+def probe_xtream(username: str, password: str, *, timeout: float | tuple[float, float] = (12, 30)) -> None:
+    """Comprueba conectividad al panel (una sola petición, sin reintentos)."""
+    xtream_raw_request(
+        username,
+        password,
+        'get_live_categories',
+        use_cache=False,
+        max_retries=0,
+        timeout=timeout,
+    )
+
+
+def server_outbound_ip() -> str:
+    cached = getattr(_thread_local, 'outbound_ip', None)
+    if cached:
+        return cached
+    try:
+        response = requests.get('https://api.ipify.org', timeout=8)
+        response.raise_for_status()
+        ip = response.text.strip()
+        _thread_local.outbound_ip = ip
+        return ip
+    except requests.RequestException:
+        return ''
 
 
 def limit_results(data, limit: str | None):

@@ -1,0 +1,46 @@
+EA IPTV - Bypass Xtream para Windows
+=====================================
+
+Que hace esto
+-------------
+Levanta un proxy HTTP (tinyproxy) en Docker en tu PC Windows.
+El servidor del gateway (VM en la nube) llega a Xtream a traves de tu IP
+residencial usando la red ZeroTier EA_VPN.
+
+Requisitos
+----------
+1. Windows 10/11 con Docker Desktop instalado y en ejecucion
+2. ZeroTier instalado, unido a la red EA_VPN (Network ID: b9a18a606fa730f4)
+3. Este PC autorizado en ZeroTier Central
+4. IP ZeroTier de este equipo: 10.234.232.218 (aprox.)
+
+Archivos
+--------
+  Iniciar-Bypass-IPTV.bat     <- Doble clic para arrancar (PRINCIPAL)
+  Detener-Bypass-IPTV.bat     <- Detener el contenedor
+  Configurar-Firewall.bat     <- Una vez, como administrador, si falla la conexion
+  Probar-Bypass-IPTV.bat      <- Probar Xtream via proxy local
+  docker-compose.yml
+  Dockerfile
+  tinyproxy.conf
+
+Uso rapido
+----------
+1. Copia toda la carpeta "windows-bypass" a tu PC Windows
+2. Abre Docker Desktop
+3. Verifica ZeroTier conectado (IP 10.234.232.x)
+4. Doble clic en Iniciar-Bypass-IPTV.bat
+5. Avisa al admin del servidor para poner en .env:
+
+     XTREAM_HTTP_PROXY=http://10.234.232.218:8888
+
+6. El servidor reinicia el backend y sincroniza TV en vivo
+
+Notas
+-----
+- Deja Docker y este PC encendidos mientras uses IPTV
+- El puerto 8888 solo acepta clientes de 10.234.232.0/24 (ZeroTier)
+- Si cambia tu IP ZeroTier, edita ZT_IP_ESPERADA en Iniciar-Bypass-IPTV.bat
+  y la URL del proxy en el servidor
+
+Mas info: deploy/ZEROTIER-BYPASS.md en el repositorio del gateway

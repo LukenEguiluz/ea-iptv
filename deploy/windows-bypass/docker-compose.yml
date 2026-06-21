@@ -1,0 +1,13 @@
+# Proxy HTTP de salida residencial para EA IPTV Gateway.
+# Ejecutar en Windows con Docker Desktop + ZeroTier (EA_VPN).
+#
+# El servidor VM (10.234.232.149) conecta a este PC en 10.234.232.218:8888
+
+services:
+  xtream-bypass:
+    build: .
+    image: ea-iptv-xtream-bypass:latest
+    container_name: ea-iptv-xtream-bypass
+    restart: unless-stopped
+    ports:
+      - "8888:8888"

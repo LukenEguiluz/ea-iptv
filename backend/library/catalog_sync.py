@@ -11,7 +11,7 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from accounts.models import IPTVAccount
-from api.xtream import XtreamError, xtream_raw_request, xtream_sync_request
+from api.xtream import XtreamError, probe_xtream, server_outbound_ip, xtream_raw_request, xtream_sync_request
 from library.models import CatalogItem, CatalogSyncState
 
 logger = logging.getLogger(__name__)
@@ -20,6 +20,13 @@ SYNC_KEY = 'default'
 BATCH_SIZE = 1000
 SYNC_ADVISORY_LOCK_ID = 83927401
 STALE_SYNC_MINUTES = 180
+ABANDONED_SYNC_MINUTES = 5
+DEFAULT_SYNC_CONTENT_TYPES = (CatalogItem.CONTENT_LIVE,)
+ALL_CONTENT_TYPES = (
+    CatalogItem.CONTENT_LIVE,
+    CatalogItem.CONTENT_VOD,
+    CatalogItem.CONTENT_SERIES,
+)
 TYPE_LABELS = {
     CatalogItem.CONTENT_LIVE: 'TV en vivo',
     CatalogItem.CONTENT_VOD: 'Películas',
@@ -57,6 +64,66 @@ def _sync_state() -> CatalogSyncState:
     return state
 
 
+def _is_abandoned_sync(state: CatalogSyncState) -> bool:
+    if state.status != 'running':
+        return False
+    last_activity = state.updated_at or state.started_at
+    if not last_activity:
+        return True
+    return timezone.now() - last_activity > timedelta(minutes=ABANDONED_SYNC_MINUTES)
+
+
+def _recover_abandoned_sync() -> None:
+    state = _sync_state()
+    if not _is_abandoned_sync(state):
+        return
+    state.status = 'error'
+    state.error_message = (
+        'Sincronización interrumpida (reinicio del servidor). '
+        'Se reintentará automáticamente.'
+    )
+    state.progress_percent = 0
+    state.progress_phase = ''
+    state.progress_detail = ''
+    state.sync_scope = ''
+    state.finished_at = timezone.now()
+    state.save(
+        update_fields=[
+            'status',
+            'error_message',
+            'progress_percent',
+            'progress_phase',
+            'progress_detail',
+            'sync_scope',
+            'finished_at',
+            'updated_at',
+        ],
+    )
+    logger.warning('Sync abandonada recuperada (iniciada %s)', state.started_at)
+
+
+def _parse_content_types(raw) -> tuple[str, ...]:
+    if raw is None:
+        return DEFAULT_SYNC_CONTENT_TYPES
+    if isinstance(raw, (list, tuple)):
+        tokens = [str(x).strip().lower() for x in raw if str(x).strip()]
+    else:
+        tokens = [part.strip().lower() for part in str(raw).split(',') if part.strip()]
+    valid = {CatalogItem.CONTENT_LIVE, CatalogItem.CONTENT_VOD, CatalogItem.CONTENT_SERIES}
+    selected = [token for token in tokens if token in valid]
+    if not selected:
+        return DEFAULT_SYNC_CONTENT_TYPES
+    # Orden estable: live → vod → series
+    order = {CatalogItem.CONTENT_LIVE: 0, CatalogItem.CONTENT_VOD: 1, CatalogItem.CONTENT_SERIES: 2}
+    return tuple(sorted(set(selected), key=lambda value: order[value]))
+
+
+def _sync_scope_types(state: CatalogSyncState) -> tuple[str, ...]:
+    if state.sync_scope:
+        return _parse_content_types(state.sync_scope)
+    return DEFAULT_SYNC_CONTENT_TYPES
+
+
 def _is_stale_running(state: CatalogSyncState) -> bool:
     if state.status != 'running':
         return False
@@ -77,6 +144,7 @@ def _mark_stale_sync_failed(state: CatalogSyncState) -> CatalogSyncState:
     state.progress_percent = 0
     state.progress_phase = ''
     state.progress_detail = ''
+    state.sync_scope = ''
     state.finished_at = timezone.now()
     state.save(
         update_fields=[
@@ -85,6 +153,7 @@ def _mark_stale_sync_failed(state: CatalogSyncState) -> CatalogSyncState:
             'progress_percent',
             'progress_phase',
             'progress_detail',
+            'sync_scope',
             'finished_at',
             'updated_at',
         ],
@@ -182,11 +251,27 @@ def _sync_xtream(
 
 
 class _SyncProgressTracker:
-    def __init__(self, state: CatalogSyncState):
+    def __init__(self, state: CatalogSyncState, content_types: tuple[str, ...]):
         self.state = state
+        self.active_types = content_types
+        total_weight = sum(TYPE_WEIGHTS.get(content_type, 0.33) for content_type in content_types)
+        if total_weight <= 0:
+            total_weight = len(content_types) or 1
+        self.weights = {
+            content_type: TYPE_WEIGHTS.get(content_type, 0.33) / total_weight
+            for content_type in content_types
+        }
         self.lock = threading.Lock()
         self.types: dict[str, dict[int, tuple[int, int]]] = {}
         self.completed: set[str] = set()
+        labels = [TYPE_LABELS.get(content_type, content_type) for content_type in content_types]
+        _save_sync_progress(
+            state,
+            percent=0,
+            phase=', '.join(labels),
+            detail='Conectando con proveedor…',
+            force=True,
+        )
 
     def category_progress(self, content_type: str, account_id: int, done: int, total: int) -> None:
         with self.lock:
@@ -211,7 +296,8 @@ class _SyncProgressTracker:
         active_phases: list[str] = []
         details: list[str] = []
 
-        for content_type, weight in TYPE_WEIGHTS.items():
+        for content_type in self.active_types:
+            weight = self.weights[content_type]
             acc_map = self.types.get(content_type, {})
             if content_type in self.completed:
                 type_pct = 100.0
@@ -227,7 +313,7 @@ class _SyncProgressTracker:
             label = TYPE_LABELS.get(content_type, content_type)
             if content_type in self.completed:
                 continue
-            if type_pct > 0:
+            if type_pct > 0 or not self.completed:
                 active_phases.append(label)
                 if acc_map:
                     sum_done = sum(values[0] for values in acc_map.values())
@@ -235,12 +321,12 @@ class _SyncProgressTracker:
                     if sum_total:
                         details.append(f'{label} {int(type_pct)}%')
 
-        if len(self.completed) == len(TYPE_WEIGHTS):
+        if len(self.completed) == len(self.active_types):
             return 99, 'Guardando índice…', ''
 
         phase = ', '.join(active_phases) if active_phases else 'Iniciando…'
         detail = ' · '.join(details[:3])
-        return min(99, max(0, int(overall))), phase, detail
+        return min(99, max(1 if self.types else 0, int(overall))), phase, detail
 
 
 def _pick_account() -> IPTVAccount:
@@ -356,12 +442,29 @@ def _bulk_upsert(items: list[CatalogItem], content_type: str, sync_started, *, f
 
 
 def _category_workers() -> int:
-    return max(1, getattr(settings, 'CATALOG_SYNC_CATEGORY_WORKERS', 10))
+    if getattr(settings, 'CATALOG_SYNC_GENTLE', True):
+        return 1
+    return max(1, getattr(settings, 'CATALOG_SYNC_CATEGORY_WORKERS', 2))
+
+
+def _category_delay_seconds() -> float:
+    return max(0.0, float(getattr(settings, 'CATALOG_SYNC_CATEGORY_DELAY', 0.35)))
 
 
 def _account_workers(account_count: int) -> int:
-    configured = max(1, getattr(settings, 'CATALOG_SYNC_ACCOUNT_WORKERS', 5))
+    if not getattr(settings, 'CATALOG_SYNC_ALL_ACCOUNTS', False):
+        return 1
+    configured = max(1, getattr(settings, 'CATALOG_SYNC_ACCOUNT_WORKERS', 1))
     return min(account_count, configured) if account_count else 1
+
+
+def _sync_accounts() -> list[IPTVAccount]:
+    accounts = list(IPTVAccount.objects.filter(enabled=True).order_by('name'))
+    if not accounts:
+        return []
+    if getattr(settings, 'CATALOG_SYNC_ALL_ACCOUNTS', False):
+        return accounts
+    return [accounts[0]]
 
 
 def _collect_type(
@@ -414,6 +517,10 @@ def _collect_type(
                 exc.message,
             )
             return []
+        finally:
+            delay = _category_delay_seconds()
+            if delay:
+                time.sleep(delay)
         if not isinstance(streams, list):
             return []
 
@@ -450,7 +557,7 @@ def _collect_type(
 
 
 def _sync_type_all_accounts(content_type: str, tracker: _SyncProgressTracker | None = None) -> int:
-    accounts = list(IPTVAccount.objects.filter(enabled=True).order_by('name'))
+    accounts = _sync_accounts()
     if not accounts:
         raise XtreamError('No hay cuentas IPTV habilitadas para indexar.', code='no_account')
 
@@ -580,19 +687,19 @@ def _sync_interval() -> timedelta:
     return timedelta(hours=max(0.5, float(hours)))
 
 
-def _catalog_is_empty() -> bool:
-    counts = catalog_counts()
-    return counts['live'] + counts['vod'] + counts['series'] == 0
+def _live_index_empty() -> bool:
+    return CatalogItem.objects.filter(content_type=CatalogItem.CONTENT_LIVE).count() == 0
 
 
 def should_run_scheduled_sync() -> bool:
+    """Sync automático: solo TV en vivo (índice vacío o intervalo cumplido)."""
     state = _sync_state()
     if state.status == 'running':
         return False
-    if _catalog_is_empty():
+    if _live_index_empty():
         return True
     if state.finished_at is None:
-        return True
+        return _live_index_empty()
     return timezone.now() - state.finished_at >= _sync_interval()
 
 
@@ -608,17 +715,13 @@ def _release_scheduler_lock() -> None:
         cursor.execute('SELECT pg_advisory_unlock(%s)', [SYNC_ADVISORY_LOCK_ID])
 
 
-def _claim_sync_run(force: bool) -> CatalogSyncState | None:
+def _claim_sync_run(force: bool, content_types: tuple[str, ...]) -> CatalogSyncState | None:
     with transaction.atomic():
         state = CatalogSyncState.objects.select_for_update().get(pk=SYNC_KEY)
         if state.status == 'running':
-            if not force:
-                return None
-            if not _is_stale_running(state):
-                return None
-            logger.warning('Reclamando sincronización obsoleta iniciada %s', state.started_at)
-        if not force and not _catalog_is_empty():
-            if state.finished_at and timezone.now() - state.finished_at < _sync_interval():
+            if _is_abandoned_sync(state) or (force and _is_stale_running(state)):
+                logger.warning('Reclamando sincronización obsoleta iniciada %s', state.started_at)
+            else:
                 return None
         state.status = 'running'
         state.started_at = timezone.now()
@@ -629,6 +732,7 @@ def _claim_sync_run(force: bool) -> CatalogSyncState | None:
         state.progress_detail = ''
         state.progress_last_error = ''
         state.progress_retry_attempt = 0
+        state.sync_scope = ','.join(content_types)
         state.save(
             update_fields=[
                 'status',
@@ -640,36 +744,63 @@ def _claim_sync_run(force: bool) -> CatalogSyncState | None:
                 'progress_detail',
                 'progress_last_error',
                 'progress_retry_attempt',
+                'sync_scope',
                 'updated_at',
             ],
         )
         return state
 
 
-def sync_catalog_index(force: bool = False) -> CatalogSyncState:
-    if not force and not should_run_scheduled_sync():
+def sync_catalog_index(force: bool = False, content_types=None) -> CatalogSyncState:
+    selected_types = _parse_content_types(content_types)
+    is_default_scope = selected_types == DEFAULT_SYNC_CONTENT_TYPES
+
+    if not force and is_default_scope and not should_run_scheduled_sync():
         return _sync_state()
 
-    state = _claim_sync_run(force)
+    state = _claim_sync_run(force, selected_types)
     if state is None:
         return _sync_state()
 
-    logger.info('Iniciando sincronización de catálogo (force=%s)', force)
+    logger.info(
+        'Iniciando sincronización de catálogo (force=%s, types=%s)',
+        force,
+        ','.join(selected_types),
+    )
     account = _pick_account()
     username = account.username
     password = account.get_password()
-    started = time.monotonic()
-    tracker = _SyncProgressTracker(state)
 
     try:
-        content_types = [
-            CatalogItem.CONTENT_LIVE,
-            CatalogItem.CONTENT_VOD,
-            CatalogItem.CONTENT_SERIES,
-        ]
+        probe_xtream(username, password)
+    except XtreamError as exc:
+        outbound = server_outbound_ip()
+        hint = (
+            f' IP pública del servidor: {outbound}. '
+            'Si el panel requiere IP fija, autorízala en el proveedor.'
+            if outbound else ''
+        )
+        state.status = 'error'
+        state.error_message = (
+            'No se puede conectar al proveedor Xtream desde este servidor.'
+            f'{hint} Detalle: {exc.message}'
+        )[:2000]
+        state.progress_percent = 0
+        state.progress_phase = ''
+        state.progress_detail = ''
+        state.sync_scope = ''
+        state.finished_at = timezone.now()
+        state.save()
+        logger.error('Sync abortada: proveedor no alcanzable (%s)', exc.message)
+        return state
+
+    started = time.monotonic()
+    tracker = _SyncProgressTracker(state, selected_types)
+
+    try:
         type_workers = max(1, min(
             getattr(settings, 'CATALOG_SYNC_TYPE_WORKERS', 3),
-            len(content_types),
+            len(selected_types),
         ))
         results: dict[str, int] = {}
 
@@ -682,7 +813,7 @@ def sync_catalog_index(force: bool = False) -> CatalogSyncState:
                 return content_type, existing
 
         with ThreadPoolExecutor(max_workers=type_workers) as pool:
-            futures = [pool.submit(sync_one, content_type) for content_type in content_types]
+            futures = [pool.submit(sync_one, content_type) for content_type in selected_types]
             for future in as_completed(futures):
                 try:
                     content_type, count = future.result()
@@ -692,26 +823,32 @@ def sync_catalog_index(force: bool = False) -> CatalogSyncState:
                 results[content_type] = count
                 tracker.type_completed(content_type)
 
-        state.live_count = results.get(CatalogItem.CONTENT_LIVE, 0)
-        state.vod_count = results.get(CatalogItem.CONTENT_VOD, 0)
-        state.series_count = results.get(CatalogItem.CONTENT_SERIES, 0)
+        if CatalogItem.CONTENT_LIVE in selected_types:
+            state.live_count = results.get(CatalogItem.CONTENT_LIVE, state.live_count)
+        if CatalogItem.CONTENT_VOD in selected_types:
+            state.vod_count = results.get(CatalogItem.CONTENT_VOD, state.vod_count)
+        if CatalogItem.CONTENT_SERIES in selected_types:
+            state.series_count = results.get(CatalogItem.CONTENT_SERIES, state.series_count)
         state.status = 'ready'
         state.progress_percent = 100
         state.progress_phase = 'Completado'
         state.progress_detail = ''
         state.progress_last_error = ''
         state.progress_retry_attempt = 0
+        state.sync_scope = ''
         state.finished_at = timezone.now()
         state.save()
         elapsed = time.monotonic() - started
         logger.info(
-            'Catálogo sincronizado en %.1fs: live=%s vod=%s series=%s',
+            'Catálogo sincronizado en %.1fs: scope=%s live=%s vod=%s series=%s',
             elapsed,
+            ','.join(selected_types),
             state.live_count,
             state.vod_count,
             state.series_count,
         )
-        start_vod_cast_enrichment(username, password)
+        if CatalogItem.CONTENT_VOD in selected_types:
+            start_vod_cast_enrichment(username, password)
     except Exception as exc:
         state.status = 'error'
         message = str(exc)[:2000]
@@ -725,6 +862,7 @@ def sync_catalog_index(force: bool = False) -> CatalogSyncState:
         state.progress_percent = 0
         state.progress_phase = ''
         state.progress_detail = ''
+        state.sync_scope = ''
         state.finished_at = timezone.now()
         state.save(
             update_fields=[
@@ -733,6 +871,7 @@ def sync_catalog_index(force: bool = False) -> CatalogSyncState:
                 'progress_percent',
                 'progress_phase',
                 'progress_detail',
+                'sync_scope',
                 'finished_at',
                 'updated_at',
             ],
@@ -751,6 +890,16 @@ def catalog_counts() -> dict:
     }
 
 
+def catalog_type_ready(content_type: str) -> bool:
+    mapping = {
+        CatalogItem.CONTENT_LIVE: 'live',
+        CatalogItem.CONTENT_VOD: 'vod',
+        CatalogItem.CONTENT_SERIES: 'series',
+    }
+    key = mapping.get(content_type, content_type)
+    return catalog_counts()[key] > 0
+
+
 def sync_status_payload() -> dict:
     state = _mark_stale_sync_failed(_sync_state())
     counts = catalog_counts()
@@ -758,6 +907,12 @@ def sync_status_payload() -> dict:
     next_sync_at = None
     if state.finished_at and state.status == 'ready':
         next_sync_at = (state.finished_at + interval).isoformat()
+    running_types = list(_sync_scope_types(state)) if state.status == 'running' else []
+    ready_by_type = {
+        'live': counts['live'] > 0,
+        'vod': counts['vod'] > 0,
+        'series': counts['series'] > 0,
+    }
     return {
         'status': state.status,
         'started_at': state.started_at.isoformat() if state.started_at else None,
@@ -766,7 +921,9 @@ def sync_status_payload() -> dict:
         'interval_hours': interval.total_seconds() / 3600,
         'counts': counts,
         'error': state.error_message or None,
-        'ready': counts['live'] + counts['vod'] + counts['series'] > 0,
+        'ready': ready_by_type['live'],
+        'ready_by_type': ready_by_type,
+        'sync_types': running_types,
         'progress_percent': state.progress_percent,
         'progress_phase': state.progress_phase or None,
         'progress_detail': state.progress_detail or None,
@@ -776,9 +933,13 @@ def sync_status_payload() -> dict:
     }
 
 
+parse_content_types = _parse_content_types
+
+
 def _scheduler_loop() -> None:
     poll_seconds = 300
     time.sleep(10)
+    _recover_abandoned_sync()
 
     while True:
         try:
@@ -787,8 +948,9 @@ def _scheduler_loop() -> None:
                 time.sleep(poll_seconds)
                 continue
             try:
+                _recover_abandoned_sync()
                 if should_run_scheduled_sync():
-                    sync_catalog_index(force=False)
+                    sync_catalog_index(force=False, content_types=DEFAULT_SYNC_CONTENT_TYPES)
             finally:
                 _release_scheduler_lock()
         except Exception as exc:

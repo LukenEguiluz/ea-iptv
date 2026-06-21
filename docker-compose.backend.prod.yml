@@ -1,13 +1,17 @@
-# Solo backend + PostgreSQL (frontend en Vercel u otro host).
-# Desarrollo / sin HTTPS: docker compose -f docker-compose.backend.yml up -d --build
+# Backend + PostgreSQL + Caddy (HTTPS en api.ea-iptv.leyluz.com).
+# No incluye frontend — el SPA vive en Vercel (ea-iptv.leyluz.com).
 #
-# Producción (api.ea-iptv.leyluz.com + Caddy HTTPS):
+# Uso:
+#   cp .env.example .env   # rellenar secretos
 #   ./scripts/deploy-backend.sh
-#   (usa docker-compose.backend.prod.yml)
+#
+# O manualmente:
+#   docker compose -f docker-compose.backend.prod.yml up -d --build
 
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: iptv_gateway
       POSTGRES_USER: iptv_gateway
@@ -15,7 +19,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5434:5432"
+      - "127.0.0.1:5434:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U iptv_gateway -d iptv_gateway"]
       interval: 5s
@@ -26,6 +30,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    restart: unless-stopped
     env_file:
       - .env
     environment:
@@ -36,10 +41,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-iptv_gateway_secret}
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-secret-change-in-production}
       DEBUG: ${DEBUG:-False}
-      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
-      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-}
-      CORS_ORIGINS: ${CORS_ORIGINS:-}
-      GATEWAY_PUBLIC_URL: ${GATEWAY_PUBLIC_URL:-}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-api.ea-iptv.leyluz.com,localhost,127.0.0.1}
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-https://api.ea-iptv.leyluz.com}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://ea-iptv.leyluz.com}
+      GATEWAY_PUBLIC_URL: ${GATEWAY_PUBLIC_URL:-https://api.ea-iptv.leyluz.com}
       IPTV_ENCRYPTION_KEY: ${IPTV_ENCRYPTION_KEY:-}
       SESSION_INACTIVITY_MINUTES: ${SESSION_INACTIVITY_MINUTES:-5}
       XTREAM_SERVER_URL: ${XTREAM_SERVER_URL:-}
@@ -59,16 +64,37 @@ services:
       IPTV_USER_CARMEN_PASSWORD: ${IPTV_USER_CARMEN_PASSWORD:-}
       IPTV_USER_ARTURO_PASSWORD: ${IPTV_USER_ARTURO_PASSWORD:-}
       CATALOG_SYNC_INTERVAL_HOURS: ${CATALOG_SYNC_INTERVAL_HOURS:-4}
-      CATALOG_SYNC_CATEGORY_WORKERS: ${CATALOG_SYNC_CATEGORY_WORKERS:-10}
-      CATALOG_SYNC_ACCOUNT_WORKERS: ${CATALOG_SYNC_ACCOUNT_WORKERS:-5}
+      CATALOG_SYNC_CATEGORY_WORKERS: ${CATALOG_SYNC_CATEGORY_WORKERS:-2}
+      CATALOG_SYNC_ACCOUNT_WORKERS: ${CATALOG_SYNC_ACCOUNT_WORKERS:-1}
+      CATALOG_SYNC_GENTLE: ${CATALOG_SYNC_GENTLE:-true}
+      CATALOG_SYNC_ALL_ACCOUNTS: ${CATALOG_SYNC_ALL_ACCOUNTS:-false}
+      CATALOG_SYNC_CATEGORY_DELAY: ${CATALOG_SYNC_CATEGORY_DELAY:-0.35}
+      CATALOG_SYNC_XTREAM_MAX_RETRIES: ${CATALOG_SYNC_XTREAM_MAX_RETRIES:-8}
+      XTREAM_HTTP_PROXY: ${XTREAM_HTTP_PROXY:-}
       DJANGO_SUPERUSER_USERNAME: ${DJANGO_SUPERUSER_USERNAME:-}
       DJANGO_SUPERUSER_EMAIL: ${DJANGO_SUPERUSER_EMAIL:-}
       DJANGO_SUPERUSER_PASSWORD: ${DJANGO_SUPERUSER_PASSWORD:-}
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     depends_on:
       db:
         condition: service_healthy
 
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+
 volumes:
   postgres_data:
+  caddy_data:
+  caddy_config:

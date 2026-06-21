@@ -1,5 +1,5 @@
 from api.catalog_utils import rewrite_media_field
-from library.catalog_sync import sync_status_payload
+from library.catalog_sync import catalog_type_ready, sync_status_payload
 from library.models import CatalogItem
 
 CATALOG_PAGE_MAX = 5000
@@ -19,7 +19,9 @@ def _parse_page_limit(value, default: int = 300) -> int:
         return default
 
 
-def catalog_index_ready() -> bool:
+def catalog_index_ready(content_type: str | None = None) -> bool:
+    if content_type:
+        return catalog_type_ready(content_type)
     return sync_status_payload()['ready']
 
 

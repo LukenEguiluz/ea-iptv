@@ -11,10 +11,12 @@ import SearchBar from '../components/SearchBar'
 import { usePlayback } from '../context/PlaybackContext'
 import { useCatalogRefresh } from '../context/CatalogRefreshContext'
 import usePaginatedCatalog from '../hooks/usePaginatedCatalog'
+import useOptionalCatalogSync from '../hooks/useOptionalCatalogSync'
 
 export default function Movies() {
   const { playItem, setPlayer } = usePlayback()
   const { refreshGeneration } = useCatalogRefresh()
+  const { prompt: syncPrompt } = useOptionalCatalogSync('vod')
   const {
     ALL_CATEGORY,
     categories,
@@ -71,6 +73,7 @@ export default function Movies() {
 
   return (
     <PageShell active="movies" title="Películas">
+      {syncPrompt}
       <CatalogLoadOverlay
         show={loading && movies.length === 0}
         title="Cargando películas"

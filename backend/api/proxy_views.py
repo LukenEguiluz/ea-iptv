@@ -22,6 +22,7 @@ from .catalog_utils import (
 )
 from .xtream import (
     XtreamError,
+    PROVIDER_USER_AGENT,
     _server_url,
     get_credentials,
     live_stream_url,
@@ -34,10 +35,6 @@ logger = logging.getLogger(__name__)
 STREAM_CHUNK = 64 * 1024
 LIVE_FIRST_BYTE_TIMEOUT = 10
 LIVE_PROXY_READ_TIMEOUT = 120
-PROVIDER_USER_AGENT = (
-    'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 '
-    '(KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3'
-)
 from .stream_utils import (
     analyze_stream,
     cache_path,

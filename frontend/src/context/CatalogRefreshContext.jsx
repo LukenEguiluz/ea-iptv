@@ -114,7 +114,7 @@ export function CatalogRefreshProvider({ children }) {
     }
   }, [applyCatalogStatus, bumpIfNewVersion])
 
-  const waitForSync = useCallback(async () => {
+  const waitForSync = useCallback(async (types = ['live']) => {
     const deadline = Date.now() + 30 * 60 * 1000
     while (Date.now() < deadline) {
       await sleep(CATALOG_SYNC_PROGRESS_POLL_MS)
@@ -128,6 +128,13 @@ export function CatalogRefreshProvider({ children }) {
           }
           return data
         }
+        const waitingFor = types || ['live']
+        const allReady = waitingFor.every((type) => data.ready_by_type?.[type])
+        if (allReady) {
+          bumpIfNewVersion(data.version)
+          logCatalogInfo('complete', 'Sincronización completada', summarizeCatalogStatus(data))
+          return data
+        }
       } catch (err) {
         logCatalogWarn('wait', 'Error al consultar progreso; reintentando…', {
           error: err instanceof Error ? err.message : String(err),
@@ -138,21 +145,22 @@ export function CatalogRefreshProvider({ children }) {
     return readStatus('wait-timeout')
   }, [applyCatalogStatus, bumpIfNewVersion, readStatus])
 
-  const runCatalogRefresh = useCallback(async ({ force = false } = {}) => {
+  const runCatalogRefresh = useCallback(async ({ force = false, types = ['live'], wait = true } = {}) => {
     if (!isAuthenticated || syncingRef.current) return readStatus('skip')
     syncingRef.current = true
-    logCatalogInfo('start', force ? 'Iniciando sync forzada' : 'Iniciando sync programada', { force })
+    logCatalogInfo('start', force ? 'Iniciando sync forzada' : 'Iniciando sync programada', { force, types })
     try {
-      const result = await triggerCatalogRefresh(force)
+      const result = await triggerCatalogRefresh(force, types)
       applyCatalogStatus(result, 'trigger')
       bumpIfNewVersion(result.version)
-      if (result.status === 'running' || result.detail === 'Sincronización iniciada.') {
-        return waitForSync()
+      if (wait && (result.status === 'running' || result.detail === 'Sincronización iniciada.')) {
+        return waitForSync(types)
       }
       return result
     } catch (err) {
       logCatalogError('trigger', 'No se pudo iniciar la sincronización', {
         force,
+        types,
         error: err instanceof Error ? err.message : String(err),
       })
       return readStatus('trigger-error')
@@ -169,10 +177,16 @@ export function CatalogRefreshProvider({ children }) {
       return undefined
     }
 
-    readStatus('init').catch(() => {})
+    readStatus('init')
+      .then((data) => {
+        if (!data?.ready_by_type?.live && data?.status !== 'running') {
+          runCatalogRefresh({ types: ['live'], wait: false })
+        }
+      })
+      .catch(() => {})
 
     const timer = window.setInterval(() => {
-      runCatalogRefresh()
+      runCatalogRefresh({ types: ['live'], wait: false })
     }, CATALOG_REFRESH_MS)
 
     function onVisibilityChange() {
@@ -188,7 +202,7 @@ export function CatalogRefreshProvider({ children }) {
       hiddenAtRef.current = null
 
       if (hiddenMs >= CATALOG_VISIBILITY_MS) {
-        runCatalogRefresh()
+        runCatalogRefresh({ types: ['live'], wait: false })
       } else {
         readStatus('visibility').catch(() => {})
       }

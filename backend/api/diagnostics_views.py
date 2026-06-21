@@ -166,11 +166,15 @@ class DiagnosticsView(CatalogBaseView):
         })
 
 
+from .xtream import server_outbound_ip
+
+
 class DiagnosticsConfigView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         return Response({
             'server_url': getattr(settings, 'XTREAM_SERVER_URL', ''),
+            'server_outbound_ip': server_outbound_ip(),
             'session_inactivity_minutes': getattr(settings, 'SESSION_INACTIVITY_MINUTES', 5),
         })

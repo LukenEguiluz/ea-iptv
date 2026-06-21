@@ -58,6 +58,7 @@ class CatalogSyncState(models.Model):
     progress_detail = models.CharField(max_length=256, blank=True, default='')
     progress_last_error = models.CharField(max_length=256, blank=True, default='')
     progress_retry_attempt = models.PositiveSmallIntegerField(default=0)
+    sync_scope = models.CharField(max_length=32, blank=True, default='')
     updated_at = models.DateTimeField(auto_now=True)
 
 

@@ -12,11 +12,13 @@ import SearchBar from '../components/SearchBar'
 import { usePlayback } from '../context/PlaybackContext'
 import { useCatalogRefresh } from '../context/CatalogRefreshContext'
 import usePaginatedCatalog from '../hooks/usePaginatedCatalog'
+import useOptionalCatalogSync from '../hooks/useOptionalCatalogSync'
 
 export default function Series() {
   const navigate = useNavigate()
   const { setPlayer } = usePlayback()
   const { refreshGeneration } = useCatalogRefresh()
+  const { prompt: syncPrompt } = useOptionalCatalogSync('series')
   const {
     ALL_CATEGORY,
     categories,
@@ -58,6 +60,7 @@ export default function Series() {
 
   return (
     <PageShell active="series" title="Series">
+      {syncPrompt}
       <CatalogLoadOverlay
         show={loading && series.length === 0}
         title="Cargando series"

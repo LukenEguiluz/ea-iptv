@@ -25,6 +25,7 @@ from .catalog_list import (
 from .stream_utils import get_media_playback_info
 from .xtream import (
     XtreamError,
+    PROVIDER_USER_AGENT,
     get_credentials,
     limit_results,
     series_stream_url,
@@ -76,13 +77,6 @@ def _play_payload(request, user, *, kind: str, stream_id: str | int, ext: str, i
     }
 
 
-# Provider user-agent shared with proxy
-PROVIDER_USER_AGENT = (
-    'Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 '
-    '(KHTML, like Gecko) MAG200 stbapp ver: 2 rev: 250 Safari/533.3'
-)
-
-
 def _client_ip(request) -> str | None:
     forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
     if forwarded:
@@ -119,7 +113,7 @@ class CatalogBaseView(APIView):
 
 class LiveCategoriesView(CatalogBaseView):
     def get(self, request):
-        if catalog_index_ready():
+        if catalog_index_ready(CatalogItem.CONTENT_LIVE):
             return Response(list_categories_from_index(CatalogItem.CONTENT_LIVE))
         data = xtream_request(request.user, 'get_live_categories', ip_address=_client_ip(request))
         return Response(data)
@@ -182,7 +176,7 @@ class LiveStreamsView(CatalogBaseView):
         offset = _parse_offset(request.query_params.get('offset', '0'))
         page_limit = _parse_page_limit(request.query_params.get('limit', '300'))
 
-        if catalog_index_ready():
+        if catalog_index_ready(CatalogItem.CONTENT_LIVE):
             payload = list_catalog_from_index(
                 request,
                 content_type=CatalogItem.CONTENT_LIVE,
@@ -205,7 +199,7 @@ class LiveStreamsView(CatalogBaseView):
 
 class VodCategoriesView(CatalogBaseView):
     def get(self, request):
-        if catalog_index_ready():
+        if catalog_index_ready(CatalogItem.CONTENT_VOD):
             return Response(list_categories_from_index(CatalogItem.CONTENT_VOD))
         data = xtream_request(request.user, 'get_vod_categories', ip_address=_client_ip(request))
         return Response(data)
@@ -221,7 +215,7 @@ class VodStreamsView(CatalogBaseView):
         offset = _parse_offset(request.query_params.get('offset', '0'))
         page_limit = _parse_page_limit(request.query_params.get('limit', '300'))
 
-        if catalog_index_ready():
+        if catalog_index_ready(CatalogItem.CONTENT_VOD):
             payload = list_catalog_from_index(
                 request,
                 content_type=CatalogItem.CONTENT_VOD,
@@ -244,7 +238,7 @@ class VodStreamsView(CatalogBaseView):
 
 class SeriesCategoriesView(CatalogBaseView):
     def get(self, request):
-        if catalog_index_ready():
+        if catalog_index_ready(CatalogItem.CONTENT_SERIES):
             return Response(list_categories_from_index(CatalogItem.CONTENT_SERIES))
         data = xtream_request(request.user, 'get_series_categories', ip_address=_client_ip(request))
         return Response(data)
@@ -260,7 +254,7 @@ class SeriesListView(CatalogBaseView):
         offset = _parse_offset(request.query_params.get('offset', '0'))
         page_limit = _parse_page_limit(request.query_params.get('limit', '300'))
 
-        if catalog_index_ready():
+        if catalog_index_ready(CatalogItem.CONTENT_SERIES):
             payload = list_catalog_from_index(
                 request,
                 content_type=CatalogItem.CONTENT_SERIES,

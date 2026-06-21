@@ -68,11 +68,11 @@ export default function Settings() {
       ? 100
       : 0
 
-  async function refreshCatalogNow() {
+  async function refreshCatalogNow(types = ['live']) {
     setRefreshingCatalog(true)
     setCatalogError('')
     try {
-      await runCatalogRefresh({ force: true })
+      await runCatalogRefresh({ force: true, types, wait: true })
     } catch (err) {
       setCatalogError(err.message)
       console.error('[IPTV Catálogo]', err.message, err)
@@ -103,21 +103,35 @@ export default function Settings() {
       <Paper sx={{ p: { xs: 2, md: 3 }, mb: 3 }}>
         <Typography variant="h6" sx={{ mb: 1 }}>Catálogo</Typography>
         <Typography color="text.secondary" sx={{ mb: 2 }}>
-          Sincroniza películas, series y TV en vivo desde el proveedor (`/api/catalog/refresh`).
+          Por defecto se sincroniza TV en vivo. Películas y series se indexan bajo demanda.
         </Typography>
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }}>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'center' }} flexWrap="wrap" useFlexGap>
           <Button
             variant="outlined"
             startIcon={refreshingCatalog || isSyncRunning ? <CircularProgress size={18} /> : <SyncIcon />}
-            onClick={refreshCatalogNow}
+            onClick={() => refreshCatalogNow(['live'])}
             disabled={refreshingCatalog || isSyncRunning}
           >
-            {refreshingCatalog || isSyncRunning ? 'Sincronizando…' : 'Actualizar catálogo ahora'}
+            {refreshingCatalog || isSyncRunning ? 'Sincronizando…' : 'Actualizar TV en vivo'}
+          </Button>
+          <Button
+            variant="text"
+            onClick={() => refreshCatalogNow(['vod'])}
+            disabled={refreshingCatalog || isSyncRunning}
+          >
+            Indexar películas
+          </Button>
+          <Button
+            variant="text"
+            onClick={() => refreshCatalogNow(['series'])}
+            disabled={refreshingCatalog || isSyncRunning}
+          >
+            Indexar series
           </Button>
           {catalogStatus ? (
             <Chip
               size="small"
-              label={`Estado: ${STATUS_LABELS[catalogStatus.status] || catalogStatus.status}${catalogStatus.counts?.vod ? ` · ${catalogStatus.counts.vod.toLocaleString()} películas` : ''}`}
+              label={`Estado: ${STATUS_LABELS[catalogStatus.status] || catalogStatus.status}${catalogStatus.counts?.live ? ` · ${catalogStatus.counts.live.toLocaleString()} canales` : ''}`}
               color={catalogStatus.status === 'ready' ? 'success' : catalogStatus.status === 'running' ? 'warning' : catalogStatus.status === 'error' ? 'error' : 'default'}
             />
           ) : null}
