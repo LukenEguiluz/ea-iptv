@@ -70,7 +70,13 @@ if errorlevel 1 (
 
 echo.
 echo [3/4] Construyendo e iniciando contenedor Docker...
-docker compose up -d --build
+if exist tinyproxy.conf del /f /q tinyproxy.conf 2>nul
+docker compose build --no-cache
+if errorlevel 1 (
+    echo [ERROR] Fallo al construir la imagen.
+    goto :fin_error
+)
+docker compose up -d
 if errorlevel 1 (
     echo [ERROR] Fallo al iniciar docker compose.
     goto :fin_error

@@ -1,36 +1,36 @@
 @echo off
 setlocal EnableExtensions
 chcp 65001 >nul 2>&1
-title EA IPTV - Actualizar config tinyproxy
+title EA IPTV - Reconstruir bypass
 
 cd /d "%~dp0"
 
 echo.
-echo  Actualizando tinyproxy.conf (permite red ZeroTier + Docker)...
+echo  Reconstruyendo imagen (config embebida en Dockerfile, sin tinyproxy.conf local)...
 echo.
 
-> tinyproxy.conf (
-echo Port 8888
-echo Listen 0.0.0.0
-echo Allow 127.0.0.1
-echo Allow 10.234.232.0/24
-echo Allow 172.16.0.0/12
-echo Allow 192.168.0.0/16
-echo Allow 0.0.0.0/0
-echo Timeout 600
-echo MaxClients 64
-echo ConnectPort 443
-echo ConnectPort 563
-echo ConnectPort 80
-echo ConnectPort 8080
+if exist tinyproxy.conf (
+    echo  Eliminando tinyproxy.conf local corrupto si existe...
+    del /f /q tinyproxy.conf 2>nul
 )
 
-echo  Reiniciando contenedor...
-docker compose up -d --build
+docker compose down 2>nul
+docker compose build --no-cache
+if errorlevel 1 goto :error
+
+docker compose up -d
+if errorlevel 1 goto :error
 
 echo.
-docker compose logs --tail 8
+docker compose logs --tail 10
 echo.
-echo  Listo. Prueba con Probar-Bypass-IPTV.bat
+echo  OK. Prueba con Probar-Bypass-IPTV.bat
 echo.
 pause
+exit /b 0
+
+:error
+echo.
+echo  ERROR al reconstruir. Comprueba que Docker Desktop este en ejecucion.
+pause
+exit /b 1
