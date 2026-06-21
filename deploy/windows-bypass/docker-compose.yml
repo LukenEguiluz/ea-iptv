@@ -10,4 +10,4 @@ services:
     container_name: ea-iptv-xtream-bypass
     restart: unless-stopped
     ports:
-      - "8888:8888"
+      - "0.0.0.0:8888:8888"

@@ -58,7 +58,9 @@ if errorlevel 1 (
     echo         Si el servidor no conecta, ejecuta Configurar-Firewall.bat como administrador.
 ) else (
     netsh advfirewall firewall delete rule name="EA-IPTV Xtream Bypass" >nul 2>&1
-    netsh advfirewall firewall add rule name="EA-IPTV Xtream Bypass" dir=in action=allow protocol=TCP localport=%PROXY_PORT% remoteip=%ZT_NETWORK% >nul
+    netsh advfirewall firewall delete rule name="EA-IPTV Xtream Bypass VM" >nul 2>&1
+    netsh advfirewall firewall add rule name="EA-IPTV Xtream Bypass" dir=in action=allow protocol=TCP localport=%PROXY_PORT% remoteip=%ZT_NETWORK% profile=any >nul
+    netsh advfirewall firewall add rule name="EA-IPTV Xtream Bypass VM" dir=in action=allow protocol=TCP localport=%PROXY_PORT% remoteip=%SERVIDOR_VM%/32 profile=any >nul
     if errorlevel 1 (
         echo [AVISO] No se pudo crear la regla de firewall automaticamente.
     ) else (
