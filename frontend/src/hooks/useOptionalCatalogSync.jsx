@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import CatalogSyncPrompt from './CatalogSyncPrompt'
+import CatalogSyncPrompt from '../components/CatalogSyncPrompt'
 import { useCatalogRefresh } from '../context/CatalogRefreshContext'
 
 const DECLINE_KEY = {
