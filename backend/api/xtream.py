@@ -84,6 +84,7 @@ def provider_stream_get(
     stream: bool = True,
     timeout: float | tuple[float, float] = (10, 300),
     extra_headers: dict[str, str] | None = None,
+    allow_redirects: bool = True,
 ) -> requests.Response:
     """GET al proveedor Xtream (streams/API) con bypass residencial si aplica."""
     headers = xtream_request_headers()
@@ -94,9 +95,38 @@ def provider_stream_get(
         headers=headers,
         stream=stream,
         timeout=timeout,
-        allow_redirects=True,
+        allow_redirects=allow_redirects,
         proxies=provider_request_proxies(),
     )
+
+
+def resolve_provider_live_url(upstream_url: str) -> str:
+    """Resuelve el 302 del panel al CDN sin descargar el stream (evita timeout en proxy legacy)."""
+    proxies = provider_request_proxies()
+    if not proxies:
+        return upstream_url
+    headers = xtream_request_headers()
+    headers['Connection'] = 'close'
+    try:
+        response = requests.get(
+            upstream_url,
+            headers=headers,
+            stream=True,
+            timeout=(10, 15),
+            allow_redirects=False,
+            proxies=proxies,
+        )
+        try:
+            if response.status_code in (301, 302, 303, 307, 308):
+                location = (response.headers.get('Location') or '').strip()
+                if location:
+                    logger.info('live_redirect %s -> %s', upstream_url[:70], location[:70])
+                    return location
+        finally:
+            response.close()
+    except requests.RequestException as exc:
+        logger.warning('live_redirect_failed url=%s error=%s', upstream_url[:80], exc)
+    return upstream_url
 
 
 class XtreamError(Exception):

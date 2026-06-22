@@ -28,6 +28,7 @@ from .xtream import (
     get_credentials,
     live_stream_url,
     provider_stream_get,
+    resolve_provider_live_url,
     series_stream_url,
     should_use_provider_proxy,
     vod_stream_url,
@@ -163,8 +164,12 @@ def _proxy_live_passthrough(
         user_id,
     )
 
+    play_url = upstream_url
+    if getattr(settings, 'XTREAM_HTTP_PROXY', '').strip():
+        play_url = resolve_provider_live_url(upstream_url)
+
     try:
-        upstream = _fetch_upstream(upstream_url, request, kind='live')
+        upstream = _fetch_upstream(play_url, request, kind='live')
     except requests.RequestException as exc:
         elapsed_ms = int((time.monotonic() - started_at) * 1000)
         logger.warning(
@@ -185,7 +190,7 @@ def _proxy_live_passthrough(
         elapsed_ms = int((time.monotonic() - started_at) * 1000)
         logger.warning(
             'live_proxy upstream_error url=%s status=%s elapsed_ms=%s',
-            safe_url,
+            (play_url if len(play_url) <= 120 else f'{play_url[:120]}…'),
             upstream.status_code,
             elapsed_ms,
         )
