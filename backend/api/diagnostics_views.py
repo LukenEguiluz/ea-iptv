@@ -178,4 +178,7 @@ class DiagnosticsConfigView(APIView):
             'server_outbound_ip': server_outbound_ip(),
             'session_inactivity_minutes': getattr(settings, 'SESSION_INACTIVITY_MINUTES', 5),
             'client_direct_playback': getattr(settings, 'CLIENT_DIRECT_PLAYBACK', True),
+            'catalog_use_index': getattr(settings, 'CATALOG_USE_INDEX', False),
+            'catalog_sync_enabled': getattr(settings, 'CATALOG_SYNC_ENABLED', False),
+            'catalog_mode': 'indexed' if getattr(settings, 'CATALOG_USE_INDEX', False) else 'on_demand',
         })

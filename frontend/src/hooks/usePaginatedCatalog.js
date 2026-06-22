@@ -8,7 +8,7 @@ const PAGE_SIZE = 300
 export default function usePaginatedCatalog(catalogType) {
   const [categories, setCategories] = useState([])
   const [items, setItems] = useState([])
-  const [activeCategory, setActiveCategory] = useState(ALL_CATEGORY)
+  const [activeCategory, setActiveCategory] = useState(null)
   const [total, setTotal] = useState(0)
   const [loadingCats, setLoadingCats] = useState(true)
   const [loading, setLoading] = useState(false)
@@ -56,7 +56,7 @@ export default function usePaginatedCatalog(catalogType) {
 
   useEffect(() => {
     const node = loadMoreRef.current
-    if (!node || items.length >= total) return undefined
+    if (!node || !activeCategory || items.length >= total) return undefined
 
     const observer = new IntersectionObserver((entries) => {
       if (!entries[0]?.isIntersecting || loading || loadingMore) return

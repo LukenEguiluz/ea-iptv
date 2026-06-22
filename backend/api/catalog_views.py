@@ -1,3 +1,4 @@
+from django.conf import settings
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -108,6 +109,19 @@ def _category_required_response():
     )
 
 
+def _all_category_not_allowed_response():
+    return Response(
+        {
+            'detail': (
+                'La pestaña «Todas» no está disponible en modo directo. '
+                'Elige una categoría (estilo Smarters/TiviMate).'
+            ),
+            'code': 'all_category_disabled',
+        },
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
 class CatalogBaseView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -179,6 +193,8 @@ class LiveStreamsView(CatalogBaseView):
         category_id = request.query_params.get('category_id', '').strip()
         if not category_id:
             return _category_required_response()
+        if category_id == 'all' and not catalog_index_ready(CatalogItem.CONTENT_LIVE):
+            return _all_category_not_allowed_response()
 
         paginated = request.query_params.get('paginated', '').strip().lower() in {'1', 'true', 'yes'}
         offset = _parse_offset(request.query_params.get('offset', '0'))
@@ -218,6 +234,8 @@ class VodStreamsView(CatalogBaseView):
         category_id = request.query_params.get('category_id', '').strip()
         if not category_id:
             return _category_required_response()
+        if category_id == 'all' and not catalog_index_ready(CatalogItem.CONTENT_VOD):
+            return _all_category_not_allowed_response()
 
         paginated = request.query_params.get('paginated', '').strip().lower() in {'1', 'true', 'yes'}
         offset = _parse_offset(request.query_params.get('offset', '0'))
@@ -257,6 +275,8 @@ class SeriesListView(CatalogBaseView):
         category_id = request.query_params.get('category_id', '').strip()
         if not category_id:
             return _category_required_response()
+        if category_id == 'all' and not catalog_index_ready(CatalogItem.CONTENT_SERIES):
+            return _all_category_not_allowed_response()
 
         paginated = request.query_params.get('paginated', '').strip().lower() in {'1', 'true', 'yes'}
         offset = _parse_offset(request.query_params.get('offset', '0'))

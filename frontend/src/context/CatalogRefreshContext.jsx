@@ -7,6 +7,7 @@ import {
   useState,
 } from 'react'
 import { fetchCatalogRefresh, triggerCatalogRefresh } from '../api'
+import { useAppConfig } from './AppConfigContext'
 import { useAuth } from './AuthContext'
 import {
   formatRetryMessage,
@@ -32,6 +33,7 @@ function sleep(ms) {
 
 export function CatalogRefreshProvider({ children }) {
   const { isAuthenticated } = useAuth()
+  const { isOnDemand } = useAppConfig()
   const [refreshGeneration, setRefreshGeneration] = useState(0)
   const [catalogStatus, setCatalogStatus] = useState(null)
   const versionRef = useRef(null)
@@ -146,6 +148,10 @@ export function CatalogRefreshProvider({ children }) {
   }, [applyCatalogStatus, bumpIfNewVersion, readStatus])
 
   const runCatalogRefresh = useCallback(async ({ force = false, types = ['live'], wait = true } = {}) => {
+    if (isOnDemand) {
+      logCatalogInfo('skip', 'Sync desactivada en modo directo (on-demand)')
+      return null
+    }
     if (!isAuthenticated || syncingRef.current) return readStatus('skip')
     syncingRef.current = true
     logCatalogInfo('start', force ? 'Iniciando sync forzada' : 'Iniciando sync programada', { force, types })
@@ -167,13 +173,13 @@ export function CatalogRefreshProvider({ children }) {
     } finally {
       syncingRef.current = false
     }
-  }, [applyCatalogStatus, bumpIfNewVersion, isAuthenticated, readStatus, waitForSync])
+  }, [applyCatalogStatus, bumpIfNewVersion, isAuthenticated, isOnDemand, readStatus, waitForSync])
 
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (!isAuthenticated || isOnDemand) {
       versionRef.current = null
       prevStatusRef.current = null
-      setCatalogStatus(null)
+      if (isOnDemand) setCatalogStatus(null)
       return undefined
     }
 
@@ -213,27 +219,27 @@ export function CatalogRefreshProvider({ children }) {
       window.clearInterval(timer)
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
-  }, [isAuthenticated, readStatus, runCatalogRefresh])
+  }, [isAuthenticated, isOnDemand, readStatus, runCatalogRefresh])
 
   useEffect(() => {
-    if (!isAuthenticated) return undefined
+    if (!isAuthenticated || isOnDemand) return undefined
 
     const timer = window.setInterval(() => {
       readStatus('interval').catch(() => {})
     }, REFRESH_STATUS_POLL_MS)
 
     return () => window.clearInterval(timer)
-  }, [isAuthenticated, readStatus])
+  }, [isAuthenticated, isOnDemand, readStatus])
 
   useEffect(() => {
-    if (!isAuthenticated || catalogStatus?.status !== 'running') return undefined
+    if (!isAuthenticated || isOnDemand || catalogStatus?.status !== 'running') return undefined
 
     const timer = window.setInterval(() => {
       readStatus('running-poll').catch(() => {})
     }, CATALOG_SYNC_PROGRESS_POLL_MS)
 
     return () => window.clearInterval(timer)
-  }, [catalogStatus?.status, isAuthenticated, readStatus])
+  }, [catalogStatus?.status, isAuthenticated, isOnDemand, readStatus])
 
   return (
     <CatalogRefreshContext.Provider value={{ refreshGeneration, catalogStatus, readCatalogStatus: readStatus, runCatalogRefresh }}>

@@ -9,16 +9,15 @@ import LoadingState from '../components/LoadingState'
 import MediaCard from '../components/MediaCard'
 import PageShell from '../components/PageShell'
 import SearchBar from '../components/SearchBar'
+import { useAppConfig } from '../context/AppConfigContext'
 import { usePlayback } from '../context/PlaybackContext'
-import { useCatalogRefresh } from '../context/CatalogRefreshContext'
+import useFirstCategory from '../hooks/useFirstCategory'
 import usePaginatedCatalog from '../hooks/usePaginatedCatalog'
-import useOptionalCatalogSync from '../hooks/useOptionalCatalogSync'
 
 export default function Series() {
   const navigate = useNavigate()
   const { setPlayer } = usePlayback()
-  const { refreshGeneration } = useCatalogRefresh()
-  const { prompt: syncPrompt } = useOptionalCatalogSync('series')
+  const { isOnDemand } = useAppConfig()
   const {
     ALL_CATEGORY,
     categories,
@@ -34,8 +33,9 @@ export default function Series() {
     error,
     setError,
     loadMoreRef,
-    reloadCurrentItems,
   } = usePaginatedCatalog('series')
+
+  useFirstCategory(categories, activeCategory, setActiveCategory)
 
   const loadCategories = useCallback(() => {
     setLoadingCats(true)
@@ -49,18 +49,11 @@ export default function Series() {
   }, [setCategories, setError, setLoadingCats])
 
   useEffect(() => {
-    loadCategories().then(() => setActiveCategory(ALL_CATEGORY))
-  }, [ALL_CATEGORY, loadCategories, setActiveCategory])
-
-  useEffect(() => {
-    if (refreshGeneration === 0) return
     loadCategories()
-    reloadCurrentItems()
-  }, [refreshGeneration, loadCategories, reloadCurrentItems])
+  }, [loadCategories])
 
   return (
     <PageShell active="series" title="Series">
-      {syncPrompt}
       <CatalogLoadOverlay
         show={loading && series.length === 0}
         title="Cargando series"
@@ -73,12 +66,14 @@ export default function Series() {
         placeholder="Buscar por título, actor o director…"
         emptyLabel="No se encontraron series"
         onSeriesSelect={(item) => navigate(`/series/${item.item_id}`)}
+        disabled={isOnDemand}
       />
       {error ? <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert> : null}
       <CategoryChips
         categories={categories}
         activeCategory={activeCategory}
         allValue={ALL_CATEGORY}
+        showAllChip={!isOnDemand}
         onChange={setActiveCategory}
         loading={loadingCats}
         searchPlaceholder="Buscar categoría de series…"

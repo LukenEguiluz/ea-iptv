@@ -962,6 +962,9 @@ def start_catalog_sync_scheduler() -> None:
     global _scheduler_started
     if _scheduler_started:
         return
+    if not getattr(settings, 'CATALOG_SYNC_ENABLED', False):
+        logger.info('Programador de catálogo desactivado (CATALOG_SYNC_ENABLED=false)')
+        return
     _scheduler_started = True
     thread = threading.Thread(target=_scheduler_loop, name='catalog-sync-scheduler', daemon=True)
     thread.start()

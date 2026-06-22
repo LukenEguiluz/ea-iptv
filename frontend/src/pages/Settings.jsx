@@ -23,6 +23,7 @@ import ErrorOutlinedIcon from '@mui/icons-material/ErrorOutlined'
 import PlayCircleOutlinedIcon from '@mui/icons-material/PlayCircleOutlined'
 import SyncIcon from '@mui/icons-material/Sync'
 import { fetchDiagnostics } from '../api'
+import { useAppConfig } from '../context/AppConfigContext'
 import { useCatalogRefresh } from '../context/CatalogRefreshContext'
 import LoadingState from '../components/LoadingState'
 import PageShell from '../components/PageShell'
@@ -54,6 +55,7 @@ function formatCatalogCounts(counts) {
 }
 
 export default function Settings() {
+  const { isOnDemand } = useAppConfig()
   const { catalogStatus, runCatalogRefresh } = useCatalogRefresh()
   const [report, setReport] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -97,9 +99,17 @@ export default function Settings() {
   return (
     <PageShell active="settings" title="Configuración y diagnóstico">
       <Typography color="text.secondary" sx={{ mb: 3, maxWidth: 640 }}>
-        Comprueba que el servidor Xtream responde correctamente y revisa los enlaces más usados del proveedor.
+        {isOnDemand
+          ? 'Modo directo (Smarters/TiviMate): el catálogo se carga bajo demanda por categoría, sin sincronización masiva en el servidor.'
+          : 'Comprueba que el servidor Xtream responde correctamente y revisa los enlaces más usados del proveedor.'}
       </Typography>
 
+      {isOnDemand ? (
+        <Alert severity="info" sx={{ mb: 3, maxWidth: 640 }}>
+          Catálogo on-demand activo. Cada navegación pide solo la categoría seleccionada al proveedor
+          (mínimas peticiones API, estilo app IPTV).
+        </Alert>
+      ) : (
       <Paper sx={{ p: { xs: 2, md: 3 }, mb: 3 }}>
         <Typography variant="h6" sx={{ mb: 1 }}>Catálogo</Typography>
         <Typography color="text.secondary" sx={{ mb: 2 }}>
@@ -183,6 +193,7 @@ export default function Settings() {
         ) : null}
         {catalogError ? <Alert severity="error" sx={{ mt: 2 }}>{catalogError}</Alert> : null}
       </Paper>
+      )}
 
       <Button
         variant="contained"

@@ -17,6 +17,7 @@ export default function CategoryChips({
   activeCategory,
   allValue,
   allLabel = 'Todas',
+  showAllChip = true,
   onChange,
   loading = false,
   searchPlaceholder = 'Buscar categoría…',
@@ -102,7 +103,7 @@ export default function CategoryChips({
           '&::-webkit-scrollbar': { height: 6 },
         }}
       >
-        {!categoryQuery.trim() ? (
+        {!categoryQuery.trim() && showAllChip ? (
           <Chip
             label={allLabel}
             clickable

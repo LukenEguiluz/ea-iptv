@@ -1,7 +1,9 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
+from .config_views import AppConfigView
 from .catalog_refresh_views import CatalogRefreshView
+from .xtream_views import XtreamCredentialsView, XtreamPlayerApiView
 from .catalog_views import (
     LiveCategoriesView,
     LiveEpgView,
@@ -38,6 +40,9 @@ urlpatterns = [
     path('session/heartbeat', SessionHeartbeatView.as_view(), name='session_heartbeat'),
     path('session/end', SessionEndView.as_view(), name='session_end'),
     path('session/current', SessionCurrentView.as_view(), name='session_current'),
+    path('config', AppConfigView.as_view(), name='app_config'),
+    path('xtream/credentials', XtreamCredentialsView.as_view(), name='xtream_credentials'),
+    path('xtream/player_api', XtreamPlayerApiView.as_view(), name='xtream_player_api'),
     path('catalog/live/categories', LiveCategoriesView.as_view(), name='catalog_live_categories'),
     path('catalog/live/streams', LiveStreamsView.as_view(), name='catalog_live_streams'),
     path('catalog/live/<str:stream_id>/play', LiveStreamUrlView.as_view(), name='catalog_live_play'),

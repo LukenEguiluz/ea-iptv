@@ -114,6 +114,15 @@ export async function fetchVodCatalog(categoryId, options = {}) {
   return fetchPaginatedCatalog('vod', categoryId, options)
 }
 
+export async function fetchAppConfig() {
+  const response = await apiFetch('/config')
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.detail || 'No se pudo cargar la configuración')
+  }
+  return response.json()
+}
+
 export async function fetchCatalog(path) {
   const response = await apiFetch(path)
   if (!response.ok) {

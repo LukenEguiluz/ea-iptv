@@ -1,5 +1,6 @@
 import threading
 
+from django.conf import settings
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -15,6 +16,20 @@ class CatalogSearchView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        if not getattr(settings, 'CATALOG_USE_INDEX', False):
+            return Response(
+                {
+                    'detail': (
+                        'Búsqueda global desactivada en modo directo. '
+                        'Navega por categorías o usa el buscador de categorías.'
+                    ),
+                    'code': 'search_disabled',
+                    'query': request.query_params.get('q', '').strip(),
+                    'results': [],
+                    'count': 0,
+                },
+            )
+
         query = request.query_params.get('q', '').strip()
         content_type = request.query_params.get('type', '').strip().lower() or None
         limit = request.query_params.get('limit', '40')

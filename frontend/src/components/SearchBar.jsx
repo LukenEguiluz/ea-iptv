@@ -28,6 +28,7 @@ export default function SearchBar({
   onSelect,
   onSeriesSelect,
   emptyLabel = 'Sin resultados',
+  disabled = false,
 }) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
@@ -79,6 +80,14 @@ export default function SearchBar({
   }
 
   const showPanel = open && (loading || error || query.trim().length >= 2)
+
+  if (disabled) {
+    return (
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        Búsqueda global desactivada en modo directo. Navega por categorías.
+      </Typography>
+    )
+  }
 
   return (
     <ClickAwayListener onClickAway={() => setOpen(false)}>

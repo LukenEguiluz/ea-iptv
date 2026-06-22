@@ -20,6 +20,10 @@ def _parse_page_limit(value, default: int = 300) -> int:
 
 
 def catalog_index_ready(content_type: str | None = None) -> bool:
+    from django.conf import settings
+
+    if not getattr(settings, 'CATALOG_USE_INDEX', False):
+        return False
     if content_type:
         return catalog_type_ready(content_type)
     return sync_status_payload()['ready']

@@ -1,0 +1,1142 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IPTV Web Player</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0D0F14;
+      --surface: #161920;
+      --surface2: #1E2330;
+      --border: #2A3142;
+      --text: #E8ECF4;
+      --muted: #8B95A8;
+      --accent: #00C8FF;
+      --accent-dim: rgba(0, 200, 255, 0.15);
+      --danger: #FF5C6A;
+      --radius: 10px;
+      --sidebar-w: 240px;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    button, input, select { font: inherit; color: inherit; }
+    button { cursor: pointer; border: none; background: none; }
+    a { color: var(--accent); }
+    mark { background: var(--accent-dim); color: var(--text); border-radius: 2px; padding: 0 2px; }
+
+    /* ── Modal login ── */
+    #modal-backdrop {
+      position: fixed; inset: 0; z-index: 1000;
+      background: rgba(0,0,0,.75);
+      display: flex; align-items: center; justify-content: center;
+      padding: 16px;
+    }
+    #modal-backdrop.hidden { display: none; }
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      width: 100%; max-width: 440px;
+      padding: 28px;
+    }
+    .modal h2 { font-size: 1.25rem; margin-bottom: 6px; }
+    .modal p.sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+    .mode-tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+    .mode-tab {
+      flex: 1; padding: 10px; border-radius: 8px;
+      background: var(--surface2); border: 1px solid var(--border);
+      font-weight: 500; transition: .15s;
+    }
+    .mode-tab.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+    .field { margin-bottom: 14px; }
+    .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+    .field input {
+      width: 100%; padding: 10px 12px;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 8px; outline: none;
+    }
+    .field input:focus { border-color: var(--accent); }
+    .btn-primary {
+      width: 100%; padding: 12px; margin-top: 8px;
+      background: var(--accent); color: #000; font-weight: 600;
+      border-radius: 8px; transition: .15s;
+    }
+    .btn-primary:hover { filter: brightness(1.1); }
+    .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+    #login-error {
+      margin-top: 12px; padding: 10px; border-radius: 8px;
+      background: rgba(255,92,106,.12); color: var(--danger); font-size: 13px;
+      display: none;
+    }
+    #login-error.visible { display: block; }
+
+    /* ── Layout principal ── */
+    #app { display: none; height: 100vh; flex-direction: column; }
+    #app.visible { display: flex; }
+
+    #topbar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 16px; background: var(--surface);
+      border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    .content-tabs { display: flex; gap: 4px; }
+    .content-tab {
+      padding: 8px 14px; border-radius: 8px; font-weight: 500;
+      color: var(--muted); transition: .15s;
+    }
+    .content-tab.active { background: var(--accent-dim); color: var(--accent); }
+    .content-tab:hover:not(.active) { background: var(--surface2); color: var(--text); }
+
+    .search-wrap {
+      flex: 1; max-width: 360px; position: relative; margin-left: auto;
+    }
+    #search {
+      width: 100%; padding: 8px 32px 8px 12px;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 8px; outline: none;
+    }
+    #search:focus { border-color: var(--accent); }
+    #search-clear {
+      position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+      color: var(--muted); font-size: 18px; line-height: 1; display: none;
+    }
+    #search-clear.visible { display: block; }
+
+    #btn-logout {
+      padding: 8px 14px; border-radius: 8px;
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--muted); font-size: 13px;
+    }
+    #btn-logout:hover { color: var(--text); border-color: var(--muted); }
+
+    #main { display: flex; flex: 1; min-height: 0; }
+
+    #sidebar {
+      width: var(--sidebar-w); flex-shrink: 0;
+      background: var(--surface); border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    #sidebar h3 {
+      padding: 14px 16px 8px; font-size: 11px;
+      text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+    }
+    #cat-list { flex: 1; overflow-y: auto; padding: 0 8px 12px; }
+    .cat-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 9px 10px; border-radius: 8px; cursor: pointer;
+      color: var(--muted); font-size: 13px; transition: .12s;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .cat-item:hover { background: var(--surface2); color: var(--text); }
+    .cat-item.active { background: var(--accent-dim); color: var(--accent); font-weight: 500; }
+    .cat-item .ti { font-size: 16px; flex-shrink: 0; }
+
+    #center { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+    #player-wrap {
+      position: relative; background: #000;
+      aspect-ratio: 16/9; max-height: 45vh; flex-shrink: 0;
+    }
+    #video-el { width: 100%; height: 100%; display: block; background: #000; }
+
+    #player-error {
+      position: absolute; inset: 0; z-index: 10;
+      background: rgba(0,0,0,.85);
+      display: none; flex-direction: column;
+      align-items: center; justify-content: center; gap: 14px; padding: 24px;
+      text-align: center;
+    }
+    #player-error.visible { display: flex; }
+    #player-error p { color: var(--muted); max-width: 320px; }
+    #btn-retry {
+      padding: 10px 24px; background: var(--accent); color: #000;
+      font-weight: 600; border-radius: 8px;
+    }
+
+    #now-playing-bar {
+      padding: 12px 16px; background: var(--surface);
+      border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    #np-title { font-weight: 600; font-size: 15px; margin-bottom: 2px; }
+    #np-epg-now { font-size: 13px; color: var(--accent); }
+    #np-epg-next { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    #series-panel {
+      display: none; padding: 12px 16px; background: var(--surface2);
+      border-bottom: 1px solid var(--border); max-height: 160px; overflow-y: auto;
+    }
+    #series-panel.visible { display: block; }
+    #series-panel h4 { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+    #episode-list { display: flex; flex-wrap: wrap; gap: 6px; }
+    .ep-btn {
+      padding: 6px 12px; background: var(--surface); border: 1px solid var(--border);
+      border-radius: 6px; font-size: 12px;
+    }
+    .ep-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .ep-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+
+    #channels-section { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+    #ch-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 16px; flex-shrink: 0;
+    }
+    #ch-title { font-weight: 600; }
+    #ch-count { font-size: 12px; color: var(--muted); }
+
+    #channel-list {
+      flex: 1; overflow-y: auto;
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 10px; padding: 0 16px 16px;
+      align-content: start;
+    }
+
+    .ch-card {
+      position: relative; background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius);
+      overflow: hidden; cursor: pointer; transition: .15s;
+    }
+    .ch-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+    .ch-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    .ch-logo-wrap {
+      aspect-ratio: 16/10; background: var(--surface2);
+      display: flex; align-items: center; justify-content: center; overflow: hidden;
+    }
+    .ch-logo-wrap img { width: 100%; height: 100%; object-fit: contain; }
+    .ch-logo-fallback {
+      width: 100%; height: 100%;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 1.1rem; color: #fff;
+    }
+    .ch-info { padding: 8px 10px; }
+    .ch-name {
+      font-size: 12px; font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .ch-fav {
+      position: absolute; top: 6px; right: 6px; z-index: 2;
+      width: 28px; height: 28px; border-radius: 50%;
+      background: rgba(0,0,0,.55); display: flex;
+      align-items: center; justify-content: center;
+      font-size: 14px; opacity: 0; transition: .15s;
+    }
+    .ch-card:hover .ch-fav, .ch-fav.on { opacity: 1; }
+    .ch-fav.on { color: #FFD700; }
+
+    /* Skeleton */
+    .skeleton {
+      background: var(--surface2); border-radius: var(--radius);
+      animation: shimmer 1.4s ease-in-out infinite;
+    }
+    .skeleton-card { aspect-ratio: unset; pointer-events: none; border: none; }
+    .skeleton-logo { aspect-ratio: 16/10; }
+    .skeleton-text { height: 12px; margin: 10px; border-radius: 4px; width: 70%; }
+    @keyframes shimmer {
+      0%, 100% { opacity: .4; }
+      50% { opacity: .8; }
+    }
+
+    /* Tooltip */
+    #tooltip {
+      position: fixed; z-index: 2000; pointer-events: none;
+      background: var(--surface2); border: 1px solid var(--border);
+      padding: 6px 10px; border-radius: 6px; font-size: 12px;
+      max-width: 260px; display: none;
+      box-shadow: 0 4px 16px rgba(0,0,0,.4);
+    }
+    #tooltip.visible { display: block; }
+
+    /* Icon font minimal (ti-star etc.) via unicode */
+    .ti-star::before { content: '★'; }
+    .ti-star-filled::before { content: '★'; color: #FFD700; }
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<!-- Login modal -->
+<div id="modal-backdrop">
+  <div class="modal">
+    <h2>Conectar IPTV</h2>
+    <p class="sub">Elige tu modo de conexión. Las credenciales se guardan solo durante esta sesión del navegador.</p>
+    <div class="mode-tabs">
+      <button type="button" class="mode-tab active" data-mode="xtream">Xtream Codes</button>
+      <button type="button" class="mode-tab" data-mode="m3u">Lista M3U</button>
+    </div>
+    <form id="login-form">
+      <div id="xtream-fields">
+        <div class="field">
+          <label for="inp-server">Servidor (URL base)</label>
+          <input id="inp-server" type="url" placeholder="http://line.ejemplo.com" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="inp-user">Usuario</label>
+          <input id="inp-user" type="text" autocomplete="username">
+        </div>
+        <div class="field">
+          <label for="inp-pass">Contraseña</label>
+          <input id="inp-pass" type="password" autocomplete="current-password">
+        </div>
+        <div class="field">
+          <label for="inp-cors-proxy">Proxy CORS (opcional)</label>
+          <input id="inp-cors-proxy" type="url" placeholder="https://tu-proxy.com/" autocomplete="off">
+        </div>
+      </div>
+      <div id="m3u-fields" style="display:none">
+        <div class="field">
+          <label for="inp-m3u">URL de playlist M3U / M3U Plus</label>
+          <input id="inp-m3u" type="url" placeholder="http://.../get.php?username=...&type=m3u_plus" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="inp-cors-proxy-m3u">Proxy CORS (opcional)</label>
+          <input id="inp-cors-proxy-m3u" type="url" placeholder="https://tu-proxy.com/" autocomplete="off">
+        </div>
+      </div>
+      <button type="submit" class="btn-primary" id="btn-connect">Conectar</button>
+    </form>
+    <div id="login-error"></div>
+  </div>
+</div>
+
+<!-- App -->
+<div id="app">
+  <header id="topbar">
+    <div class="content-tabs">
+      <button type="button" class="content-tab active" data-type="live">📺 En vivo</button>
+      <button type="button" class="content-tab" data-type="vod">🎬 Películas</button>
+      <button type="button" class="content-tab" data-type="series">📂 Series</button>
+    </div>
+    <div class="search-wrap">
+      <input id="search" type="search" placeholder="Buscar…" autocomplete="off">
+      <button type="button" id="search-clear" title="Limpiar">×</button>
+    </div>
+    <button type="button" id="btn-logout">Cerrar sesión</button>
+  </header>
+
+  <div id="main">
+    <aside id="sidebar">
+      <h3>Categorías</h3>
+      <div id="cat-list"></div>
+    </aside>
+
+    <div id="center">
+      <div id="player-wrap">
+        <video id="video-el" playsinline controls></video>
+        <div id="player-error">
+          <strong id="player-error-title">Error de reproducción</strong>
+          <p id="player-error-msg"></p>
+          <button type="button" id="btn-retry">Reintentar</button>
+        </div>
+      </div>
+
+      <div id="now-playing-bar">
+        <div id="np-title">Selecciona un canal</div>
+        <div id="np-epg-now"></div>
+        <div id="np-epg-next"></div>
+      </div>
+
+      <div id="series-panel">
+        <h4 id="series-panel-title">Episodios</h4>
+        <div id="episode-list"></div>
+      </div>
+
+      <div id="channels-section">
+        <div id="ch-header">
+          <span id="ch-title">Canales</span>
+          <span id="ch-count"></span>
+        </div>
+        <div id="channel-list"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="tooltip"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.14/dist/hls.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const SESSION_KEY = 'iptv_session';
+  const LOGO_COLORS = ['#3B82F6', '#8B5CF6', '#EC4899', '#F59E0B', '#10B981', '#EF4444'];
+  const FAV_CAT_ID = '__favorites__';
+
+  let state = {
+    mode: null,
+    xServer: null,
+    xUser: null,
+    xPass: null,
+    m3uUrl: null,
+    corsProxy: null,
+    contentType: 'live',
+    categories: [],
+    channels: [],
+    activeCategory: null,
+    activeChannel: null,
+    favorites: [],
+    hls: null,
+    currentChannelIndex: null,
+    seriesEpisodes: [],
+    activeSeries: null,
+    searchQuery: '',
+    lastPlayParams: null,
+  };
+
+  // ── DOM refs ──
+  const $ = (sel) => document.querySelector(sel);
+  const modalBackdrop = $('#modal-backdrop');
+  const loginForm = $('#login-form');
+  const loginError = $('#login-error');
+  const app = $('#app');
+  const catList = $('#cat-list');
+  const channelList = $('#channel-list');
+  const videoEl = $('#video-el');
+  const playerError = $('#player-error');
+  const playerErrorMsg = $('#player-error-msg');
+  const npTitle = $('#np-title');
+  const npEpgNow = $('#np-epg-now');
+  const npEpgNext = $('#np-epg-next');
+  const chTitle = $('#ch-title');
+  const chCount = $('#ch-count');
+  const searchInput = $('#search');
+  const searchClear = $('#search-clear');
+  const seriesPanel = $('#series-panel');
+  const episodeList = $('#episode-list');
+  const tooltip = $('#tooltip');
+
+  // ── Utilidades ──
+  function normalizeServer(url) {
+    let s = (url || '').trim().replace(/\/+$/, '');
+    if (s && !/^https?:\/\//i.test(s)) s = 'http://' + s;
+    return s;
+  }
+
+  function proxiedUrl(url) {
+    if (!state.corsProxy) return url;
+    const proxy = state.corsProxy.replace(/\/+$/, '') + '/';
+    return proxy + url;
+  }
+
+  function showLoginError(msg) {
+    loginError.textContent = msg;
+    loginError.classList.add('visible');
+  }
+
+  function hideLoginError() {
+    loginError.classList.remove('visible');
+  }
+
+  function hashColor(str) {
+    let h = 0;
+    for (let i = 0; i < str.length; i++) h = ((h << 5) - h) + str.charCodeAt(i);
+    return LOGO_COLORS[Math.abs(h) % LOGO_COLORS.length];
+  }
+
+  function initials(name) {
+    const parts = (name || '?').trim().split(/\s+/);
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return (name || '?').slice(0, 2).toUpperCase();
+  }
+
+  function decodeBase64Title(s) {
+    if (!s) return '';
+    try {
+      return decodeURIComponent(escape(atob(s)));
+    } catch {
+      return s;
+    }
+  }
+
+  function formatEpgTime(ts) {
+    if (!ts) return '';
+    const d = typeof ts === 'string' && /^\d+$/.test(ts)
+      ? new Date(parseInt(ts, 10) * 1000)
+      : new Date(ts);
+    if (isNaN(d)) return '';
+    return d.toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function highlightText(text, query) {
+    if (!query || query.length < 1) return escapeHtml(text);
+    const re = new RegExp('(' + query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+    return escapeHtml(text).replace(re, '<mark>$1</mark>');
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function isInputFocused() {
+    const el = document.activeElement;
+    return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+  }
+
+  function saveSession() {
+    const data = {
+      mode: state.mode,
+      server: state.xServer,
+      username: state.xUser,
+      password: state.xPass,
+      m3uUrl: state.m3uUrl,
+      corsProxy: state.corsProxy,
+    };
+    try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(data)); } catch (_) {}
+  }
+
+  function loadSession() {
+    try {
+      const raw = sessionStorage.getItem(SESSION_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  }
+
+  function clearSession() {
+    try { sessionStorage.removeItem(SESSION_KEY); } catch (_) {}
+  }
+
+  // ── API Xtream ──
+  async function xtreamFetch(action, extraParams = {}) {
+    const base = state.xServer + '/player_api.php';
+    const params = new URLSearchParams({
+      username: state.xUser,
+      password: state.xPass,
+      action,
+      ...extraParams,
+    });
+    const url = base + '?' + params.toString();
+    let res;
+    try {
+      res = await fetch(proxiedUrl(url));
+    } catch (err) {
+      throw new Error(
+        'Error de red o CORS al conectar con el servidor. ' +
+        'El panel Xtream no permite peticiones directas desde el navegador. ' +
+        'Prueba configurar un proxy CORS o usa el modo M3U con una URL get.php?type=m3u_plus. ' +
+        '(' + err.message + ')'
+      );
+    }
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' al llamar ' + action);
+    let data;
+    try { data = await res.json(); } catch {
+      throw new Error('Respuesta inválida del servidor (no JSON) en ' + action);
+    }
+    return data;
+  }
+
+  // ── M3U parser ──
+  function parseM3U(text) {
+    const lines = text.split(/\r?\n/);
+    const items = [];
+    let current = null;
+    for (const line of lines) {
+      if (line.startsWith('#EXTINF:')) {
+        const nameMatch = line.match(/,(.+)$/);
+        const logoMatch = line.match(/tvg-logo="([^"]*)"/);
+        const groupMatch = line.match(/group-title="([^"]*)"/);
+        current = {
+          name: nameMatch ? nameMatch[1].trim() : 'Sin nombre',
+          logo: logoMatch ? logoMatch[1] : '',
+          category: groupMatch ? groupMatch[1] : 'General',
+        };
+      } else if (line.trim() && !line.startsWith('#') && current) {
+        current.url = line.trim();
+        current.stream_id = String(items.length);
+        items.push(current);
+        current = null;
+      }
+    }
+    return items;
+  }
+
+  async function loadM3U(url) {
+    let res;
+    try { res = await fetch(proxiedUrl(url)); } catch (err) {
+      throw new Error('No se pudo descargar la playlist M3U: ' + err.message);
+    }
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' al descargar M3U');
+    const text = await res.text();
+    return parseM3U(text);
+  }
+
+  // ── Conexión ──
+  let loginMode = 'xtream';
+
+  document.querySelectorAll('.mode-tab').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      loginMode = btn.dataset.mode;
+      document.querySelectorAll('.mode-tab').forEach((b) => b.classList.toggle('active', b === btn));
+      $('#xtream-fields').style.display = loginMode === 'xtream' ? '' : 'none';
+      $('#m3u-fields').style.display = loginMode === 'm3u' ? '' : 'none';
+      hideLoginError();
+    });
+  });
+
+  loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    hideLoginError();
+    const btn = $('#btn-connect');
+    btn.disabled = true;
+    try {
+      if (loginMode === 'xtream') await connectXtream();
+      else await connectM3U();
+      saveSession();
+      modalBackdrop.classList.add('hidden');
+      app.classList.add('visible');
+    } catch (err) {
+      showLoginError(err.message || String(err));
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  async function connectXtream() {
+    state.mode = 'xtream';
+    state.xServer = normalizeServer($('#inp-server').value);
+    state.xUser = $('#inp-user').value.trim();
+    state.xPass = $('#inp-pass').value;
+    state.corsProxy = normalizeServer($('#inp-cors-proxy').value) || null;
+    if (!state.xServer || !state.xUser || !state.xPass) {
+      throw new Error('Completa servidor, usuario y contraseña.');
+    }
+    await xtreamFetch('get_live_categories');
+    state.contentType = 'live';
+    await loadCategories();
+  }
+
+  async function connectM3U() {
+    state.mode = 'm3u';
+    state.m3uUrl = $('#inp-m3u').value.trim();
+    state.corsProxy = normalizeServer($('#inp-cors-proxy-m3u').value) || null;
+    if (!state.m3uUrl) throw new Error('Indica la URL de la playlist M3U.');
+    const items = await loadM3U(state.m3uUrl);
+    if (!items.length) throw new Error('La playlist M3U no contiene canales.');
+    state.contentType = 'live';
+    buildM3UCategories(items);
+  }
+
+  function buildM3UCategories(items) {
+    const groups = {};
+    items.forEach((ch) => {
+      const g = ch.category || 'General';
+      if (!groups[g]) groups[g] = [];
+      groups[g].push(ch);
+    });
+    state.categories = Object.keys(groups).sort().map((name, i) => ({ category_id: String(i), category_name: name }));
+    state._m3uGroups = groups;
+    renderCategories();
+    if (state.categories.length) selectCategory(state.categories[0].category_id);
+  }
+
+  async function reconnectFromSession(data) {
+    state.mode = data.mode;
+    state.corsProxy = data.corsProxy || null;
+    if (data.mode === 'xtream') {
+      state.xServer = data.server;
+      state.xUser = data.username;
+      state.xPass = data.password;
+      $('#inp-server').value = data.server || '';
+      $('#inp-user').value = data.username || '';
+      $('#inp-pass').value = data.password || '';
+      $('#inp-cors-proxy').value = data.corsProxy || '';
+      await xtreamFetch('get_live_categories');
+      state.contentType = 'live';
+      await loadCategories();
+    } else {
+      state.m3uUrl = data.m3uUrl;
+      $('#inp-m3u').value = data.m3uUrl || '';
+      const items = await loadM3U(state.m3uUrl);
+      buildM3UCategories(items);
+    }
+    modalBackdrop.classList.add('hidden');
+    app.classList.add('visible');
+  }
+
+  // ── Categorías ──
+  async function loadCategories() {
+    if (state.mode === 'm3u') return;
+    let action;
+    if (state.contentType === 'live') action = 'get_live_categories';
+    else if (state.contentType === 'vod') action = 'get_vod_categories';
+    else action = 'get_series_categories';
+    const cats = await xtreamFetch(action);
+    state.categories = Array.isArray(cats) ? cats : [];
+    renderCategories();
+    if (state.categories.length) {
+      selectCategory(state.categories[0].category_id);
+    } else {
+      state.channels = [];
+      renderChannels();
+    }
+  }
+
+  function renderCategories() {
+    catList.innerHTML = '';
+    const favItem = document.createElement('div');
+    favItem.className = 'cat-item' + (state.activeCategory === FAV_CAT_ID ? ' active' : '');
+    favItem.dataset.id = FAV_CAT_ID;
+    favItem.innerHTML = '<span class="ti ti-star"></span> Favoritos';
+    favItem.addEventListener('click', () => selectCategory(FAV_CAT_ID));
+    catList.appendChild(favItem);
+
+    state.categories.forEach((cat) => {
+      const el = document.createElement('div');
+      el.className = 'cat-item' + (state.activeCategory === cat.category_id ? ' active' : '');
+      el.dataset.id = cat.category_id;
+      el.textContent = cat.category_name;
+      el.title = cat.category_name;
+      el.addEventListener('click', () => selectCategory(cat.category_id));
+      catList.appendChild(el);
+    });
+  }
+
+  async function selectCategory(catId) {
+    state.activeCategory = catId;
+    state.activeSeries = null;
+    seriesPanel.classList.remove('visible');
+    renderCategories();
+    if (catId === FAV_CAT_ID) {
+      state.channels = state.favorites.map((f) => ({ ...f, _fromFav: true }));
+      renderChannels();
+      return;
+    }
+    showSkeletons();
+    try {
+      if (state.mode === 'm3u') {
+        const name = state.categories.find((c) => c.category_id === catId)?.category_name;
+        state.channels = (state._m3uGroups[name] || []).map((ch) => ({
+          ...ch,
+          stream_id: ch.stream_id,
+          stream_icon: ch.logo,
+          category_name: ch.category,
+        }));
+      } else {
+        await loadStreamsForCategory(catId);
+      }
+    } catch (err) {
+      state.channels = [];
+      chCount.textContent = 'Error: ' + err.message;
+    }
+    renderChannels();
+  }
+
+  async function loadStreamsForCategory(catId) {
+    let action, key;
+    if (state.contentType === 'live') { action = 'get_live_streams'; key = 'stream_id'; }
+    else if (state.contentType === 'vod') { action = 'get_vod_streams'; key = 'stream_id'; }
+    else { action = 'get_series'; key = 'series_id'; }
+    const data = await xtreamFetch(action, { category_id: catId });
+    state.channels = Array.isArray(data) ? data : [];
+    state.channels.forEach((ch) => { if (!ch.stream_id && ch.series_id) ch.stream_id = ch.series_id; });
+  }
+
+  function showSkeletons() {
+    channelList.innerHTML = '';
+    for (let i = 0; i < 10; i++) {
+      const card = document.createElement('div');
+      card.className = 'ch-card skeleton-card skeleton';
+      card.innerHTML = '<div class="skeleton-logo skeleton"></div><div class="skeleton-text skeleton"></div>';
+      channelList.appendChild(card);
+    }
+  }
+
+  // ── Canales grid ──
+  function getFilteredChannels() {
+    const q = state.searchQuery.trim().toLowerCase();
+    if (!q) return state.channels;
+    return state.channels.filter((ch) => {
+      const name = (ch.name || '').toLowerCase();
+      const cat = (ch.category_name || '').toLowerCase();
+      return name.includes(q) || cat.includes(q);
+    });
+  }
+
+  function renderChannels() {
+    const filtered = getFilteredChannels();
+    const q = state.searchQuery.trim();
+    channelList.innerHTML = '';
+
+    const labels = { live: 'Canales', vod: 'Películas', series: 'Series' };
+    chTitle.textContent = state.activeCategory === FAV_CAT_ID
+      ? 'Favoritos'
+      : (state.categories.find((c) => c.category_id === state.activeCategory)?.category_name || labels[state.contentType]);
+
+    if (q.length > 2) {
+      chCount.textContent = filtered.length + ' resultado' + (filtered.length !== 1 ? 's' : '');
+    } else {
+      chCount.textContent = filtered.length ? filtered.length + ' ítems' : '';
+    }
+
+    filtered.forEach((ch, idx) => {
+      const realIdx = state.channels.indexOf(ch);
+      const card = document.createElement('div');
+      card.className = 'ch-card' + (state.activeChannel === ch ? ' active' : '');
+      const logo = ch.stream_icon || ch.cover || ch.logo || '';
+      const name = ch.name || ch.title || 'Sin nombre';
+      const isFav = isFavorite(ch);
+
+      card.innerHTML =
+        '<button type="button" class="ch-fav' + (isFav ? ' on' : '') + '" title="Favorito">' +
+        (isFav ? '★' : '☆') + '</button>' +
+        '<div class="ch-logo-wrap">' +
+        (logo ? '<img src="' + escapeHtml(logo) + '" alt="" loading="lazy">' : '') +
+        '</div>' +
+        '<div class="ch-info"><div class="ch-name">' + highlightText(name, q) + '</div></div>';
+
+      const img = card.querySelector('img');
+      const wrap = card.querySelector('.ch-logo-wrap');
+      if (logo && img) {
+        img.onerror = () => {
+          img.remove();
+          const fb = document.createElement('div');
+          fb.className = 'ch-logo-fallback';
+          fb.style.background = hashColor(name);
+          fb.textContent = initials(name);
+          wrap.appendChild(fb);
+        };
+      } else if (!logo) {
+        const fb = document.createElement('div');
+        fb.className = 'ch-logo-fallback';
+        fb.style.background = hashColor(name);
+        fb.textContent = initials(name);
+        wrap.appendChild(fb);
+      }
+
+      card.querySelector('.ch-fav').addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleFavorite(ch);
+      });
+
+      card.addEventListener('click', () => onChannelClick(ch, realIdx));
+
+      setupTooltip(card, name);
+      channelList.appendChild(card);
+    });
+  }
+
+  function channelKey(ch) {
+    return (ch.stream_id || ch.series_id || '') + '|' + (ch.name || '');
+  }
+
+  function isFavorite(ch) {
+    const k = channelKey(ch);
+    return state.favorites.some((f) => channelKey(f) === k);
+  }
+
+  function toggleFavorite(ch) {
+    const k = channelKey(ch);
+    const idx = state.favorites.findIndex((f) => channelKey(f) === k);
+    if (idx >= 0) state.favorites.splice(idx, 1);
+    else {
+      state.favorites.push({
+        name: ch.name,
+        url: ch.url,
+        logo: ch.stream_icon || ch.cover || ch.logo || '',
+        category: ch.category_name || '',
+        stream_id: ch.stream_id || ch.series_id,
+        container_extension: ch.container_extension,
+        contentType: state.contentType,
+        raw: ch,
+      });
+    }
+    if (state.activeCategory === FAV_CAT_ID) {
+      state.channels = state.favorites.map((f) => ({ ...f.raw || f, ...f }));
+      renderChannels();
+    } else {
+      renderChannels();
+    }
+  }
+
+  async function onChannelClick(ch, idx) {
+    state.activeChannel = ch;
+    state.currentChannelIndex = idx;
+    renderChannels();
+
+    if (state.contentType === 'series' && state.mode === 'xtream') {
+      await showSeriesEpisodes(ch);
+      return;
+    }
+
+    seriesPanel.classList.remove('visible');
+    const url = buildStreamUrl(ch);
+    npTitle.textContent = ch.name || 'Reproduciendo';
+    playStream(url, { channel: ch, index: idx });
+    if (state.contentType === 'live') fetchEpg(ch.stream_id);
+    else { npEpgNow.textContent = ''; npEpgNext.textContent = ''; }
+  }
+
+  function buildStreamUrl(ch) {
+    if (ch.url) return ch.url;
+    if (state.mode !== 'xtream') return '';
+    const id = ch.stream_id || ch.series_id;
+    if (state.contentType === 'live') {
+      return state.xServer + '/live/' + state.xUser + '/' + state.xPass + '/' + id + '.ts';
+    }
+    if (state.contentType === 'vod') {
+      const ext = ch.container_extension || 'mp4';
+      return state.xServer + '/movie/' + state.xUser + '/' + state.xPass + '/' + id + '.' + ext;
+    }
+    return '';
+  }
+
+  async function showSeriesEpisodes(series) {
+    state.activeSeries = series;
+    seriesPanel.classList.add('visible');
+    $('#series-panel-title').textContent = series.name + ' — Episodios';
+    episodeList.innerHTML = '<span style="color:var(--muted)">Cargando…</span>';
+    try {
+      const info = await xtreamFetch('get_series_info', { series_id: series.series_id || series.stream_id });
+      const episodes = [];
+      const eps = info?.episodes || {};
+      Object.keys(eps).sort((a, b) => parseInt(a) - parseInt(b)).forEach((season) => {
+        (eps[season] || []).forEach((ep) => {
+          episodes.push({ ...ep, season });
+        });
+      });
+      state.seriesEpisodes = episodes;
+      episodeList.innerHTML = '';
+      episodes.forEach((ep, i) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ep-btn';
+        btn.textContent = 'T' + ep.season + ' E' + (ep.episode_num || ep.id);
+        btn.title = ep.title || '';
+        btn.addEventListener('click', () => {
+          episodeList.querySelectorAll('.ep-btn').forEach((b) => b.classList.remove('active'));
+          btn.classList.add('active');
+          const ext = ep.container_extension || 'mp4';
+          const url = state.xServer + '/series/' + state.xUser + '/' + state.xPass + '/' + ep.id + '.' + ext;
+          npTitle.textContent = series.name + ' — ' + (ep.title || btn.textContent);
+          playStream(url, { channel: ep, index: i, series });
+        });
+        episodeList.appendChild(btn);
+      });
+      if (episodes.length) episodeList.querySelector('.ep-btn').click();
+    } catch (err) {
+      episodeList.innerHTML = '<span style="color:var(--danger)">Error: ' + escapeHtml(err.message) + '</span>';
+    }
+  }
+
+  // ── EPG ──
+  async function fetchEpg(streamId) {
+    npEpgNow.textContent = '';
+    npEpgNext.textContent = '';
+    if (state.mode !== 'xtream' || !streamId) return;
+    try {
+      const data = await xtreamFetch('get_short_epg', { stream_id: streamId, limit: 2 });
+      const listings = data?.epg_listings || data;
+      if (!Array.isArray(listings) || !listings.length) return;
+      const now = listings[0];
+      const next = listings[1];
+      const nowTitle = decodeBase64Title(now.title) || now.title || '';
+      npEpgNow.textContent = '▶ Ahora: ' + nowTitle +
+        (now.start ? ' (' + formatEpgTime(now.start) + '–' + formatEpgTime(now.end) + ')' : '');
+      if (next) {
+        const nextTitle = decodeBase64Title(next.title) || next.title || '';
+        npEpgNext.textContent = 'Siguiente: ' + nextTitle +
+          (next.start ? ' (' + formatEpgTime(next.start) + ')' : '');
+      }
+    } catch (_) { /* sin EPG — no romper UI */ }
+  }
+
+  // ── Player ──
+  function destroyHls() {
+    if (state.hls) {
+      state.hls.destroy();
+      state.hls = null;
+    }
+  }
+
+  function hidePlayerError() {
+    playerError.classList.remove('visible');
+  }
+
+  function showPlayerError(title, msg) {
+    playerErrorMsg.textContent = msg;
+    $('#player-error-title').textContent = title;
+    playerError.classList.add('visible');
+  }
+
+  function playStream(url, params) {
+    hidePlayerError();
+    state.lastPlayParams = { url, ...params };
+    destroyHls();
+    videoEl.pause();
+    videoEl.removeAttribute('src');
+    videoEl.load();
+
+    const isHls = /\.m3u8(\?|$)/i.test(url);
+
+    if (isHls && window.Hls && Hls.isSupported()) {
+      state.hls = new Hls({ enableWorker: true });
+      state.hls.loadSource(url);
+      state.hls.attachMedia(videoEl);
+      state.hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        videoEl.play().catch(() => {});
+      });
+      state.hls.on(Hls.Events.ERROR, (_, data) => {
+        if (!data.fatal) return;
+        let title = 'Error de reproducción';
+        let msg = 'No se pudo reproducir el stream.';
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          msg = 'No se pudo conectar al stream. Verifica tu conexión o que la URL sea accesible desde el navegador.';
+        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          msg = 'Formato de stream no compatible con este navegador.';
+        }
+        showPlayerError(title, msg);
+      });
+    } else {
+      videoEl.src = url;
+      videoEl.play().catch(() => {});
+      videoEl.onerror = () => {
+        showPlayerError('Error de reproducción', 'Formato de stream no compatible o no accesible desde el navegador.');
+      };
+    }
+  }
+
+  $('#btn-retry').addEventListener('click', () => {
+    if (state.lastPlayParams) {
+      playStream(state.lastPlayParams.url, state.lastPlayParams);
+    }
+  });
+
+  // ── Búsqueda ──
+  searchInput.addEventListener('input', () => {
+    state.searchQuery = searchInput.value;
+    searchClear.classList.toggle('visible', state.searchQuery.length > 0);
+    renderChannels();
+  });
+
+  searchClear.addEventListener('click', () => {
+    searchInput.value = '';
+    state.searchQuery = '';
+    searchClear.classList.remove('visible');
+    renderChannels();
+    searchInput.focus();
+  });
+
+  // ── Content tabs ──
+  document.querySelectorAll('.content-tab').forEach((tab) => {
+    tab.addEventListener('click', async () => {
+      if (state.mode === 'm3u' && tab.dataset.type !== 'live') {
+        alert('El modo M3U solo soporta canales en vivo.');
+        return;
+      }
+      document.querySelectorAll('.content-tab').forEach((t) => t.classList.toggle('active', t === tab));
+      state.contentType = tab.dataset.type;
+      state.searchQuery = '';
+      searchInput.value = '';
+      searchClear.classList.remove('visible');
+      seriesPanel.classList.remove('visible');
+      if (state.mode === 'xtream') {
+        showSkeletons();
+        try { await loadCategories(); } catch (err) {
+          chCount.textContent = 'Error: ' + err.message;
+          channelList.innerHTML = '';
+        }
+      }
+    });
+  });
+
+  // ── Logout ──
+  $('#btn-logout').addEventListener('click', () => {
+    destroyHls();
+    videoEl.removeAttribute('src');
+    clearSession();
+    Object.assign(state, {
+      mode: null, xServer: null, xUser: null, xPass: null, m3uUrl: null,
+      corsProxy: null, contentType: 'live', categories: [], channels: [],
+      activeCategory: null, activeChannel: null, favorites: [],
+      currentChannelIndex: null, seriesEpisodes: [], activeSeries: null,
+      searchQuery: '', lastPlayParams: null,
+    });
+    app.classList.remove('visible');
+    modalBackdrop.classList.remove('hidden');
+    hideLoginError();
+  });
+
+  // ── Keyboard shortcuts ──
+  document.addEventListener('keydown', (e) => {
+    if (isInputFocused()) return;
+    if (e.key === ' ' && state.lastPlayParams) {
+      e.preventDefault();
+      if (videoEl.paused) videoEl.play(); else videoEl.pause();
+    } else if (e.key === 'f' || e.key === 'F') {
+      const wrap = $('#player-wrap');
+      if (wrap.requestFullscreen) wrap.requestFullscreen();
+    } else if (e.key === 'm' || e.key === 'M') {
+      videoEl.muted = !videoEl.muted;
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      zapper(e.key === 'ArrowUp' ? -1 : 1);
+    } else if (e.key === 'Escape') {
+      if (!modalBackdrop.classList.contains('hidden')) {
+        /* modal de login: no cerrar sin sesión activa */
+        if (app.classList.contains('visible')) modalBackdrop.classList.add('hidden');
+        return;
+      }
+    } else if (e.key === '/') {
+      e.preventDefault();
+      searchInput.focus();
+    }
+  });
+
+  function zapper(delta) {
+    const filtered = getFilteredChannels();
+    if (!filtered.length) return;
+    let idx = filtered.findIndex((c) => c === state.activeChannel);
+    if (idx < 0) idx = 0;
+    else idx = (idx + delta + filtered.length) % filtered.length;
+    const ch = filtered[idx];
+    const realIdx = state.channels.indexOf(ch);
+    onChannelClick(ch, realIdx);
+  }
+
+  // ── Tooltip ──
+  let tooltipTimer = null;
+  function setupTooltip(el, text) {
+    el.addEventListener('mouseenter', () => {
+      tooltipTimer = setTimeout(() => {
+        tooltip.textContent = text;
+        tooltip.classList.add('visible');
+      }, 600);
+    });
+    el.addEventListener('mousemove', (e) => {
+      if (!tooltip.classList.contains('visible')) return;
+      tooltip.style.left = (e.clientX + 12) + 'px';
+      tooltip.style.top = (e.clientY + 12) + 'px';
+    });
+    el.addEventListener('mouseleave', () => {
+      clearTimeout(tooltipTimer);
+      tooltip.classList.remove('visible');
+    });
+  }
+
+  // ── Auto-reconnect ──
+  (async function init() {
+    const saved = loadSession();
+    if (!saved) return;
+    try {
+      loginMode = saved.mode || 'xtream';
+      await reconnectFromSession(saved);
+    } catch (err) {
+      clearSession();
+      showLoginError('Sesión anterior expirada: ' + err.message);
+    }
+  })();
+})();
+</script>
+</body>
+</html>

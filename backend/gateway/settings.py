@@ -143,6 +143,10 @@ XTREAM_SERVER_URL = os.environ.get('XTREAM_SERVER_URL', '').strip().rstrip('/')
 if XTREAM_SERVER_URL and not XTREAM_SERVER_URL.startswith(('http://', 'https://')):
     XTREAM_SERVER_URL = f'http://{XTREAM_SERVER_URL}'
 
+# Modo Smarters/TiviMate: catálogo on-demand por usuario, sin índice PostgreSQL ni sync masivo.
+CATALOG_USE_INDEX = os.environ.get('CATALOG_USE_INDEX', 'false').lower() == 'true'
+CATALOG_SYNC_ENABLED = os.environ.get('CATALOG_SYNC_ENABLED', 'false').lower() == 'true'
+
 CATALOG_SYNC_INTERVAL_HOURS = float(os.environ.get('CATALOG_SYNC_INTERVAL_HOURS', '4'))
 CATALOG_SYNC_CATEGORY_WORKERS = int(os.environ.get('CATALOG_SYNC_CATEGORY_WORKERS', '2'))
 CATALOG_SYNC_ACCOUNT_WORKERS = int(os.environ.get('CATALOG_SYNC_ACCOUNT_WORKERS', '1'))

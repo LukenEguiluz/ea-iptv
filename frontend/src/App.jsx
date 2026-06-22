@@ -4,6 +4,7 @@ import { theme } from './theme'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { heartbeat, ensureGatewaySession } from './api'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import { AppConfigProvider } from './context/AppConfigContext'
 import { CatalogRefreshProvider } from './context/CatalogRefreshContext'
 import { PlaybackProvider } from './context/PlaybackContext'
 import { SearchProvider } from './context/SearchContext'
@@ -22,13 +23,15 @@ function AppShell() {
 
   return (
     <>
-      <CatalogRefreshProvider>
-        <PlaybackProvider>
-          <SearchProvider>
-            <AppRoutes />
-          </SearchProvider>
-        </PlaybackProvider>
-      </CatalogRefreshProvider>
+      <AppConfigProvider>
+        <CatalogRefreshProvider>
+          <PlaybackProvider>
+            <SearchProvider>
+              <AppRoutes />
+            </SearchProvider>
+          </PlaybackProvider>
+        </CatalogRefreshProvider>
+      </AppConfigProvider>
       <DeployUpdateDialog
         open={updateAvailable}
         onReload={reloadApp}
