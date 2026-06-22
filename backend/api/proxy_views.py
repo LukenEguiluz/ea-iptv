@@ -37,6 +37,7 @@ from .xtream import (
 User = get_user_model()
 logger = logging.getLogger(__name__)
 STREAM_CHUNK = 64 * 1024
+LIVE_STREAM_CHUNK = 128 * 1024
 LIVE_FIRST_BYTE_TIMEOUT = 10
 LIVE_FIRST_BYTE_TIMEOUT_PROXY = 90
 LIVE_PROXY_READ_TIMEOUT = 300
@@ -197,7 +198,7 @@ def _proxy_live_passthrough(
         upstream.close()
         return _live_upstream_error(upstream)
 
-    iterator = upstream.iter_content(chunk_size=STREAM_CHUNK)
+    iterator = upstream.iter_content(chunk_size=LIVE_STREAM_CHUNK)
     first_byte_timeout = _live_first_byte_timeout()
 
     def read_first_chunk():

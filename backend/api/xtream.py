@@ -100,11 +100,21 @@ def provider_stream_get(
     )
 
 
+_LIVE_REDIRECT_CACHE: dict[str, tuple[float, str]] = {}
+_LIVE_REDIRECT_CACHE_TTL_SECONDS = 50
+
+
 def resolve_provider_live_url(upstream_url: str) -> str:
     """Resuelve el 302 del panel al CDN sin descargar el stream (evita timeout en proxy legacy)."""
     proxies = provider_request_proxies()
     if not proxies:
         return upstream_url
+
+    now = time.monotonic()
+    cached = _LIVE_REDIRECT_CACHE.get(upstream_url)
+    if cached and now - cached[0] < _LIVE_REDIRECT_CACHE_TTL_SECONDS:
+        return cached[1]
+
     headers = xtream_request_headers()
     headers['Connection'] = 'close'
     try:
@@ -120,6 +130,7 @@ def resolve_provider_live_url(upstream_url: str) -> str:
             if response.status_code in (301, 302, 303, 307, 308):
                 location = (response.headers.get('Location') or '').strip()
                 if location:
+                    _LIVE_REDIRECT_CACHE[upstream_url] = (now, location)
                     logger.info('live_redirect %s -> %s', upstream_url[:70], location[:70])
                     return location
         finally:

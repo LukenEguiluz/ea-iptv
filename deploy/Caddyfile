@@ -2,9 +2,7 @@
 # El frontend en Vercel (ea-iptv.leyluz.com) llama a esta API con CORS.
 
 api.ea-iptv.leyluz.com {
-	encode gzip
-
-	# Streams / proxy: sin buffer, timeouts largos
+	# Streams binarios: sin gzip ni buffer (MPEG-TS / MP4)
 	@streaming path /api/proxy/*
 	handle @streaming {
 		reverse_proxy backend:8000 {
@@ -17,6 +15,7 @@ api.ea-iptv.leyluz.com {
 	}
 
 	handle {
+		encode gzip
 		reverse_proxy backend:8000 {
 			transport http {
 				read_timeout 5m

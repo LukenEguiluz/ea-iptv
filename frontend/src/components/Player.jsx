@@ -70,7 +70,8 @@ const LIVE_STATUS_LABELS = {
 const LIVE_RECONNECT_BASE_MS = 2500
 const LIVE_RECONNECT_MAX_MS = 30000
 const LIVE_WAITING_RECONNECT_MS = 20000
-const LIVE_BUFFER_OVERLAY_DELAY_MS = 2500
+const LIVE_BUFFER_OVERLAY_DELAY_MS = 4500
+const LIVE_WAITING_STATUS_DELAY_MS = 1200
 
 const READY_STATE_PERCENT = [8, 28, 52, 78, 100]
 const FULLSCREEN_UI_HIDE_MS = 3000
@@ -147,6 +148,7 @@ export default function Player({
   const [isWaiting, setIsWaiting] = useState(false)
   const [showBufferingOverlay, setShowBufferingOverlay] = useState(false)
   const bufferingOverlayTimerRef = useRef(null)
+  const liveWaitingStatusTimerRef = useRef(null)
   const [isSeeking, setIsSeeking] = useState(false)
   const [scrubTime, setScrubTime] = useState(0)
   const [isScrubbing, setIsScrubbing] = useState(false)
@@ -761,13 +763,16 @@ export default function Player({
       }, {
         enableWorker: false,
         enableStashBuffer: true,
-        stashInitialSize: 768 * 1024,
+        stashInitialSize: 2 * 1024 * 1024,
         lazyLoad: false,
-        liveBufferLatencyChasing: true,
-        liveSync: true,
+        liveBufferLatencyChasing: false,
+        liveBufferLatencyMaxLatency: 5,
+        liveBufferLatencyMinRemain: 1.5,
+        liveSync: false,
+        fixAudioTimestampGap: true,
         autoCleanupSourceBuffer: true,
-        autoCleanupMaxBackwardDuration: 180,
-        autoCleanupMinBackwardDuration: 90,
+        autoCleanupMaxBackwardDuration: 120,
+        autoCleanupMinBackwardDuration: 60,
       })
       mpegtsPlayer.attachMediaElement(video)
       mpegtsPlayer.load()
@@ -855,6 +860,13 @@ export default function Player({
       setPlaying(false)
       userPausedRef.current = true
     }
+    const clearLiveWaitingStatusTimer = () => {
+      if (liveWaitingStatusTimerRef.current) {
+        window.clearTimeout(liveWaitingStatusTimerRef.current)
+        liveWaitingStatusTimerRef.current = null
+      }
+    }
+
     const onWaiting = () => {
       setIsWaiting(true)
       logPlaybackInfo('player.buffering', 'Buffering (evento waiting)', {
@@ -866,7 +878,11 @@ export default function Player({
         networkState: video.networkState,
       })
       if (isLive) {
-        setLiveStatus('buffering')
+        clearLiveWaitingStatusTimer()
+        liveWaitingStatusTimerRef.current = window.setTimeout(() => {
+          setLiveStatus('buffering')
+          liveWaitingStatusTimerRef.current = null
+        }, LIVE_WAITING_STATUS_DELAY_MS)
         clearWaitingReconnectTimer()
         waitingReconnectTimerRef.current = window.setTimeout(() => {
           scheduleLiveReconnectRef.current('buffering prolongado')
@@ -875,6 +891,7 @@ export default function Player({
     }
     const onPlaying = () => {
       setIsWaiting(false)
+      clearLiveWaitingStatusTimer()
       clearWaitingReconnectTimer()
       setPrepPercent(100)
       setLoadPhase('playing')
@@ -1060,6 +1077,7 @@ export default function Player({
     return () => {
       if (liveWatchdogInterval) window.clearInterval(liveWatchdogInterval)
       if (stallInterval) window.clearInterval(stallInterval)
+      clearLiveWaitingStatusTimer()
       clearWaitingReconnectTimer()
       clearReconnectTimer()
       if (meta?.itemId && isVodLike && video.currentTime > 0) {
@@ -1357,7 +1375,7 @@ export default function Player({
 
     bufferingOverlayTimerRef.current = window.setTimeout(() => {
       setShowBufferingOverlay(true)
-      logPlaybackInfo('player.buffering', 'Buffering sostenido (>2.5s) — mostrando overlay', {
+      logPlaybackInfo('player.buffering', 'Buffering sostenido (>4.5s) — mostrando overlay', {
         title,
         url,
         liveStatus,
