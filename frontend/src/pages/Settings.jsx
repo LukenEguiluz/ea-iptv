@@ -55,7 +55,7 @@ function formatCatalogCounts(counts) {
 }
 
 export default function Settings() {
-  const { isOnDemand } = useAppConfig()
+  const { isOnDemand, isNative } = useAppConfig()
   const { catalogStatus, runCatalogRefresh } = useCatalogRefresh()
   const [report, setReport] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -104,7 +104,12 @@ export default function Settings() {
           : 'Comprueba que el servidor Xtream responde correctamente y revisa los enlaces más usados del proveedor.'}
       </Typography>
 
-      {isOnDemand ? (
+      {isNative ? (
+        <Alert severity="success" sx={{ mb: 3, maxWidth: 640 }}>
+          Modo app nativa (Android): Xtream se consulta desde la IP de tu dispositivo, como Smarters o TiviMate.
+          Solo login e historial pasan por el gateway.
+        </Alert>
+      ) : isOnDemand ? (
         <Alert severity="info" sx={{ mb: 3, maxWidth: 640 }}>
           Catálogo on-demand activo. Cada navegación pide solo la categoría seleccionada al proveedor
           (mínimas peticiones API, estilo app IPTV).

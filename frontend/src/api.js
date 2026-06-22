@@ -1,18 +1,13 @@
 import { API_BASE, resolveApiUrl } from './config'
+import { clearTokens, getTokens, setTokens } from './auth/tokens'
+import {
+  canUseNativeXtream,
+  clearNativeCredentials,
+  fetchCatalogNative,
+  fetchLiveEpgNative,
+  fetchPlayUrlNative,
+} from './services/nativeCatalog'
 import { resolvePlaybackUrls } from './utils/playbackUrl'
-
-function getTokens() {
-  const raw = localStorage.getItem('iptv_tokens')
-  return raw ? JSON.parse(raw) : null
-}
-
-function setTokens(tokens) {
-  localStorage.setItem('iptv_tokens', JSON.stringify(tokens))
-}
-
-function clearTokens() {
-  localStorage.removeItem('iptv_tokens')
-}
 
 async function refreshAccessToken() {
   const tokens = getTokens()
@@ -78,12 +73,15 @@ export async function login(username, password) {
 }
 
 export function logout() {
+  clearNativeCredentials()
   clearTokens()
 }
 
 export function isLoggedIn() {
   return Boolean(getTokens()?.access)
 }
+
+export { getTokens, setTokens, clearTokens }
 
 const CATALOG_PATHS = {
   live: '/catalog/live/streams',
@@ -102,7 +100,11 @@ export async function fetchPaginatedCatalog(catalogType, categoryId, { offset = 
     offset: String(offset),
     limit: String(limit),
   })
-  const response = await apiFetch(`${basePath}?${params}`)
+  const fullPath = `${basePath}?${params}`
+  if (canUseNativeXtream()) {
+    return fetchCatalogNative(fullPath)
+  }
+  const response = await apiFetch(fullPath)
   if (!response.ok) {
     const err = await response.json().catch(() => ({}))
     throw new Error(err.detail || 'Error al cargar catálogo')
@@ -124,6 +126,9 @@ export async function fetchAppConfig() {
 }
 
 export async function fetchCatalog(path) {
+  if (canUseNativeXtream()) {
+    return fetchCatalogNative(path)
+  }
   const response = await apiFetch(path)
   if (!response.ok) {
     const err = await response.json().catch(() => ({}))
@@ -133,6 +138,9 @@ export async function fetchCatalog(path) {
 }
 
 export async function fetchLiveEpg(itemId, limit = 8) {
+  if (canUseNativeXtream()) {
+    return fetchLiveEpgNative(itemId, limit)
+  }
   const params = new URLSearchParams({ limit: String(limit) })
   const response = await apiFetch(`/catalog/live/${itemId}/epg?${params}`)
   if (!response.ok) {
@@ -146,12 +154,17 @@ export async function fetchLiveEpg(itemId, limit = 8) {
 }
 
 export async function fetchPlayUrl(path) {
-  const response = await apiFetch(path)
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}))
-    throw new Error(err.detail || 'No se pudo reproducir')
+  let data
+  if (canUseNativeXtream()) {
+    data = await fetchPlayUrlNative(path)
+  } else {
+    const response = await apiFetch(path)
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}))
+      throw new Error(err.detail || 'No se pudo reproducir')
+    }
+    data = await response.json()
   }
-  const data = await response.json()
   const playback = resolvePlaybackUrls(data)
   data.url = playback.url
   data.fallbackUrl = playback.fallbackUrl

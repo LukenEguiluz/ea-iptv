@@ -1,0 +1,12 @@
+{
+  "appId": "com.leyluz.eaiptv",
+  "appName": "LeyLuz TV",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}

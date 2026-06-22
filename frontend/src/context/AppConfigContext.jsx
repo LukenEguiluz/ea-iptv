@@ -6,6 +6,7 @@ import {
   useState,
 } from 'react'
 import { fetchAppConfig } from '../api'
+import { isNativeApp } from '../utils/platform'
 import { useAuth } from './AuthContext'
 
 const AppConfigContext = createContext(null)
@@ -32,12 +33,20 @@ export function AppConfigProvider({ children }) {
     setLoading(true)
     try {
       const data = await fetchAppConfig()
-      const next = { ...DEFAULT_CONFIG, ...data }
+      const next = {
+        ...DEFAULT_CONFIG,
+        ...data,
+        catalog_mode: isNativeApp() ? 'native' : (data.catalog_mode || 'on_demand'),
+      }
       setConfig(next)
       return next
     } catch {
-      setConfig(DEFAULT_CONFIG)
-      return DEFAULT_CONFIG
+      const fallback = {
+        ...DEFAULT_CONFIG,
+        catalog_mode: isNativeApp() ? 'native' : 'on_demand',
+      }
+      setConfig(fallback)
+      return fallback
     } finally {
       setLoading(false)
     }
@@ -47,13 +56,15 @@ export function AppConfigProvider({ children }) {
     reloadConfig()
   }, [reloadConfig])
 
-  const isOnDemand = config.catalog_mode === 'on_demand'
+  const isOnDemand = config.catalog_mode === 'on_demand' || config.catalog_mode === 'native'
+  const isNative = isNativeApp()
 
   return (
     <AppConfigContext.Provider value={{
       config,
       loading,
       isOnDemand,
+      isNative,
       reloadConfig,
     }}>
       {children}

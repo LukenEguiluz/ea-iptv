@@ -1,9 +1,11 @@
 import { resolveApiUrl } from '../config'
+import { isNativeApp } from './platform'
 import { logPlaybackInfo } from './playbackLog'
 
-/** Presenta stream HTTP como HTTPS (mismo host) para evitar mixed content en la web. */
+/** Presenta stream HTTP como HTTPS (solo web HTTPS; en app nativa se usa HTTP real). */
 export function presentHttpsStreamUrl(url) {
   if (!url) return url
+  if (isNativeApp()) return url
   if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
     return url.replace(/^http:\/\//i, 'https://')
   }
@@ -12,21 +14,45 @@ export function presentHttpsStreamUrl(url) {
 
 export function isMixedContentUrl(url) {
   if (!url || typeof window === 'undefined') return false
+  if (isNativeApp()) return false
   return window.location.protocol === 'https:' && /^http:\/\//i.test(url)
 }
 
 /**
- * URL directa al proveedor con esquema HTTPS en página HTTPS.
- * Si falla la conexión, el reproductor usa proxy_url (túnel HTTPS real vía API).
+ * URL directa al proveedor; en web HTTPS usa proxy como fallback si hay mixed content.
  */
 export function resolvePlaybackUrls(playData) {
   const rawDirect = playData.direct_url
     || (playData.playback_mode === 'direct' ? playData.url : null)
   const proxyUrl = playData.proxy_url ? resolveApiUrl(playData.proxy_url) : null
-  const streamUrl = presentHttpsStreamUrl(rawDirect || playData.url)
 
-  if (streamUrl && playData.playback_mode === 'direct') {
-    logPlaybackInfo('playback.url', 'Stream directo (HTTPS al proveedor)', {
+  if (playData.playback_mode === 'direct' && rawDirect) {
+    if (isNativeApp()) {
+      logPlaybackInfo('playback.url', 'Stream directo (app nativa → proveedor)', {
+        playbackMode: 'direct',
+      })
+      return {
+        url: rawDirect,
+        fallbackUrl: null,
+        playbackMode: 'direct',
+        directUrl: rawDirect,
+      }
+    }
+
+    if (isMixedContentUrl(rawDirect) && proxyUrl) {
+      logPlaybackInfo('playback.url', 'Proxy VM (panel HTTP, web HTTPS)', {
+        playbackMode: 'proxy',
+      })
+      return {
+        url: proxyUrl,
+        fallbackUrl: null,
+        playbackMode: 'proxy',
+        directUrl: rawDirect,
+      }
+    }
+
+    const streamUrl = presentHttpsStreamUrl(rawDirect)
+    logPlaybackInfo('playback.url', 'Stream directo con fallback proxy', {
       playbackMode: 'direct',
       url: streamUrl,
       hasProxyFallback: Boolean(proxyUrl),
@@ -35,7 +61,7 @@ export function resolvePlaybackUrls(playData) {
       url: streamUrl,
       fallbackUrl: proxyUrl && proxyUrl !== streamUrl ? proxyUrl : null,
       playbackMode: 'direct',
-      directUrl: rawDirect || null,
+      directUrl: rawDirect,
     }
   }
 

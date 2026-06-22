@@ -14,8 +14,8 @@ import ContinueWatchingRow from '../components/ContinueWatchingRow'
 import LoadingState from '../components/LoadingState'
 import PageShell from '../components/PageShell'
 import RecentChannelsRow from '../components/RecentChannelsRow'
+import { useAppConfig } from '../context/AppConfigContext'
 import { usePlayback } from '../context/PlaybackContext'
-import { useCatalogRefresh } from '../context/CatalogRefreshContext'
 
 async function loadSection(path) {
   const data = await fetchCatalog(path)
@@ -31,7 +31,7 @@ async function loadFirstCategoryItems(categoriesPath, streamsPathBuilder) {
 
 export default function Home() {
   const { playItem, setPlayer } = usePlayback()
-  const { refreshGeneration } = useCatalogRefresh()
+  const { isNative } = useAppConfig()
   const [live, setLive] = useState([])
   const [movies, setMovies] = useState([])
   const [series, setSeries] = useState([])
@@ -71,11 +71,6 @@ export default function Home() {
     loadHomeContent()
   }, [loadHomeContent])
 
-  useEffect(() => {
-    if (refreshGeneration === 0) return
-    loadHomeContent()
-  }, [refreshGeneration, loadHomeContent])
-
   const playLive = useCallback(async (item) => {
     await playItem({
       content_type: 'live',
@@ -113,6 +108,11 @@ export default function Home() {
           {key}: {msg}
         </Alert>
       ))}
+      {isNative ? (
+        <Alert severity="success" sx={{ mb: 2 }}>
+          App nativa: el catálogo y los streams van directo al proveedor desde tu dispositivo.
+        </Alert>
+      ) : null}
       <ContinueWatchingRow onPlay={setPlayer} />
       {anyLoading && !hero ? <LoadingState message="Conectando con el proveedor IPTV…" /> : null}
       {allEmpty ? (
