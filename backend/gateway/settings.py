@@ -147,6 +147,8 @@ CATALOG_SYNC_XTREAM_RETRY_BACKOFF = os.environ.get('CATALOG_SYNC_XTREAM_RETRY_BA
 CATALOG_SYNC_XTREAM_CONNECT_TIMEOUT = float(os.environ.get('CATALOG_SYNC_XTREAM_CONNECT_TIMEOUT', '20'))
 CATALOG_SYNC_XTREAM_READ_TIMEOUT = float(os.environ.get('CATALOG_SYNC_XTREAM_READ_TIMEOUT', '90'))
 XTREAM_HTTP_PROXY = os.environ.get('XTREAM_HTTP_PROXY', '').strip()
+# Reproducción directa navegador → proveedor (estilo TiviMate). El proxy VM solo como fallback.
+CLIENT_DIRECT_PLAYBACK = os.environ.get('CLIENT_DIRECT_PLAYBACK', 'true').lower() == 'true'
 CATALOG_ENRICH_CAST_ON_SYNC = os.environ.get('CATALOG_ENRICH_CAST_ON_SYNC', 'true').lower() == 'true'
 CATALOG_ENRICH_BATCH_LIMIT = int(os.environ.get('CATALOG_ENRICH_BATCH_LIMIT', '300'))
 

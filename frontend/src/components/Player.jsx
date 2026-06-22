@@ -30,6 +30,7 @@ import Hls from 'hls.js'
 import mpegts from 'mpegts.js'
 import { saveWatchProgress } from '../api'
 import { resolveApiUrl } from '../config'
+import { isGatewayProxyUrl } from '../utils/playbackUrl'
 import {
   appendClientDecode,
   attachAvbridgePlayer,
@@ -95,6 +96,7 @@ function isVideoNativeFullscreen(video) {
 export default function Player({
   title,
   url,
+  fallbackUrl = null,
   type,
   epg,
   meta,
@@ -155,6 +157,9 @@ export default function Player({
   const [isPip, setIsPip] = useState(false)
   const userPausedRef = useRef(false)
   const togglePlayRef = useRef(() => {})
+  const usedProxyFallbackRef = useRef(false)
+  const fallbackUrlRef = useRef(fallbackUrl)
+  const [activeStreamUrl, setActiveStreamUrl] = useState(url)
   const isLive = type === 'live'
   const isVodLike = type === 'vod' || type === 'series'
   const audioTracks = tracks?.audio || []
@@ -167,6 +172,35 @@ export default function Player({
   const currentChannelNumber = currentChannelIndex >= 0
     ? (liveChannels[currentChannelIndex]?.num || currentChannelIndex + 1)
     : null
+
+  useEffect(() => {
+    fallbackUrlRef.current = fallbackUrl
+  }, [fallbackUrl])
+
+  useEffect(() => {
+    setActiveStreamUrl(url)
+    usedProxyFallbackRef.current = false
+  }, [url])
+
+  const tryProxyFallback = useCallback((reason) => {
+    const proxyUrl = fallbackUrlRef.current
+    if (!proxyUrl || usedProxyFallbackRef.current || activeStreamUrl === proxyUrl) {
+      return false
+    }
+    usedProxyFallbackRef.current = true
+    logPlaybackWarn('player.fallback', 'Reproducción directa falló — usando proxy VM', {
+      reason,
+      proxyUrl,
+      title,
+    })
+    setActiveStreamUrl(proxyUrl)
+    return true
+  }, [activeStreamUrl, title])
+
+  const tryProxyFallbackRef = useRef(tryProxyFallback)
+  useEffect(() => {
+    tryProxyFallbackRef.current = tryProxyFallback
+  }, [tryProxyFallback])
 
   const zapChannel = useCallback((direction) => {
     if (!canZap || switching) return
@@ -194,7 +228,7 @@ export default function Player({
       return () => window.clearTimeout(zapTimer)
     }
     return undefined
-  }, [url, title, isLive, currentChannelNumber])
+  }, [activeStreamUrl, title, isLive, currentChannelNumber])
 
   useEffect(() => {
     if (audioTracks.length) {
@@ -203,7 +237,7 @@ export default function Player({
       setSelectedAudio('')
     }
     setSelectedSubtitle('-1')
-  }, [url, audioTracks])
+  }, [activeStreamUrl, audioTracks])
 
   const clearUiHideTimer = useCallback(() => {
     if (uiHideTimerRef.current) {
@@ -474,10 +508,10 @@ export default function Player({
 
   useEffect(() => {
     const video = videoRef.current
-    if (!video || !url) return undefined
+    if (!video || !activeStreamUrl) return undefined
 
-    const playbackUrl = resolveApiUrl(url)
-    const needsConversion = isVodLike && playbackUrl.includes('/api/proxy/play') && !shouldUseAvbridgeForVod(playbackUrl, isVodLike, meta?.ext)
+    const playbackUrl = resolveApiUrl(activeStreamUrl)
+    const needsConversion = isVodLike && isGatewayProxyUrl(playbackUrl) && !shouldUseAvbridgeForVod(playbackUrl, isVodLike, meta?.ext)
     const useAvbridgeVodPreview = shouldUseAvbridgeForVod(playbackUrl, isVodLike, meta?.ext)
 
     loadStartedRef.current = Date.now()
@@ -516,13 +550,13 @@ export default function Player({
     }, 350)
 
     return () => window.clearInterval(progressTimer)
-  }, [url, isVodLike, isLive, durationHint])
+  }, [activeStreamUrl, isVodLike, isLive, durationHint])
 
   useEffect(() => {
     const video = videoRef.current
-    if (!video || !url) return undefined
+    if (!video || !activeStreamUrl) return undefined
 
-    const playbackUrl = resolveApiUrl(url)
+    const playbackUrl = resolveApiUrl(activeStreamUrl)
 
     const reportError = (message, details = {}) => {
       logPlaybackError('player', message, { title, url, type, meta, playbackUrl, ...details })
@@ -581,7 +615,7 @@ export default function Player({
     userPausedRef.current = false
     resetLiveRecovery()
     const useAvbridgeVod = shouldUseAvbridgeForVod(playbackUrl, isVodLike, meta?.ext)
-    setLoadPhase(isLive ? 'connecting' : (useAvbridgeVod ? 'avbridge' : (url.includes('/api/proxy/play') ? 'converting' : 'loading')))
+    setLoadPhase(isLive ? 'connecting' : (useAvbridgeVod ? 'avbridge' : (isGatewayProxyUrl(playbackUrl) ? 'converting' : 'loading')))
     if (isLive) setLiveStatus('connecting')
     lastProgressRef.current = 0
     stallTicksRef.current = 0
@@ -793,6 +827,9 @@ export default function Player({
           startAvbridgePlayback('mpegts codec error', { live: true })
           return
         }
+        if (tryProxyFallbackRef.current(`mpegts: ${detail}`)) {
+          return
+        }
         setLiveStatus('stalled')
         logPlaybackWarn('player.mpegts', 'Error en transmisión en vivo', { title, mpegtsError: data })
         scheduleLiveReconnectRef.current(`error mpegts: ${detail}`)
@@ -829,7 +866,7 @@ export default function Player({
       })
       startAvbridgePlayback('vod primary', { live: false })
     } else {
-      const needsServerTranscode = playbackUrl.includes('/api/proxy/play')
+      const needsServerTranscode = isGatewayProxyUrl(playbackUrl)
         && !shouldUseAvbridgeForVod(playbackUrl, isVodLike, meta?.ext)
       if (needsServerTranscode) {
         setLoadPhase('converting')
@@ -983,7 +1020,7 @@ export default function Player({
         }
         return
       }
-      if (!avbridgeHandle && !avbridgeStarting && isVodLike && playbackUrl.includes('/api/proxy/play')) {
+      if (!avbridgeHandle && !avbridgeStarting && isVodLike && isGatewayProxyUrl(playbackUrl)) {
         const via = shouldUseAvbridgeForVod(playbackUrl, isVodLike, meta?.ext) ? 'html5' : 'server'
         logAvbridgeWarn('native-fallback', `${via} falló, probando avbridge`, {
           mediaErrorCode: code,
@@ -992,7 +1029,7 @@ export default function Player({
         startAvbridgePlayback(`${via} error ${code || 'unknown'}`, { live: false })
         return
       }
-      if (avbridgeHandle && !serverFallbackUsed && isVodLike && playbackUrl.includes('/api/proxy/play')) {
+      if (avbridgeHandle && !serverFallbackUsed && isVodLike && isGatewayProxyUrl(playbackUrl)) {
         switchToServerTranscode(`error video durante avbridge: ${code || 'unknown'}`)
         return
       }
@@ -1122,7 +1159,7 @@ export default function Player({
       video.removeAttribute('src')
       video.load()
     }
-  }, [url, type, isLive, isVodLike, meta, resumeAt, title, initialMuted, restored, durationHint, resetLiveRecovery, clearReconnectTimer, clearWaitingReconnectTimer])
+  }, [activeStreamUrl, fallbackUrl, type, isLive, isVodLike, meta, resumeAt, title, initialMuted, restored, durationHint, resetLiveRecovery, clearReconnectTimer, clearWaitingReconnectTimer])
 
   useEffect(() => {
     if (!isLive && durationHint > 0) {

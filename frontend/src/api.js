@@ -1,4 +1,5 @@
 import { API_BASE, resolveApiUrl } from './config'
+import { resolvePlaybackUrls } from './utils/playbackUrl'
 
 function getTokens() {
   const raw = localStorage.getItem('iptv_tokens')
@@ -142,8 +143,13 @@ export async function fetchPlayUrl(path) {
     throw new Error(err.detail || 'No se pudo reproducir')
   }
   const data = await response.json()
-  if (data.url) {
-    data.url = resolveApiUrl(data.url)
+  const playback = resolvePlaybackUrls(data)
+  data.url = playback.url
+  data.fallbackUrl = playback.fallbackUrl
+  data.playbackMode = playback.playbackMode
+  data.directUrl = playback.directUrl
+  if (data.proxy_url) {
+    data.proxy_url = resolveApiUrl(data.proxy_url)
   }
   if (data.tracks?.subtitles) {
     data.tracks.subtitles = data.tracks.subtitles.map((track) => ({
@@ -327,7 +333,9 @@ export async function buildPlayerSession(item, options = {}) {
     })
     return {
       title,
-      url: resolveApiUrl(playData.url),
+      url: playData.url,
+      fallbackUrl: playData.fallbackUrl || null,
+      playbackMode: playData.playbackMode || 'proxy',
       type: playData.type,
       epg: epgData,
       restored: Boolean(options.restored),
@@ -353,7 +361,9 @@ export async function buildPlayerSession(item, options = {}) {
   })
   return {
     title,
-    url: resolveApiUrl(playData.url),
+    url: playData.url,
+    fallbackUrl: playData.fallbackUrl || null,
+    playbackMode: playData.playbackMode || 'proxy',
     type: 'vod',
     durationHint: playData.duration_seconds || progress?.duration_seconds || 0,
     tracks: playData.tracks || null,

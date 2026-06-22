@@ -177,4 +177,5 @@ class DiagnosticsConfigView(APIView):
             'server_url': getattr(settings, 'XTREAM_SERVER_URL', ''),
             'server_outbound_ip': server_outbound_ip(),
             'session_inactivity_minutes': getattr(settings, 'SESSION_INACTIVITY_MINUTES', 5),
+            'client_direct_playback': getattr(settings, 'CLIENT_DIRECT_PLAYBACK', True),
         })

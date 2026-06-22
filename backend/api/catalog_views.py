@@ -8,8 +8,8 @@ from sessions.services import SessionError
 from library.models import CatalogItem
 
 from .epg_utils import normalize_epg_list
+from .playback_utils import build_playback_urls
 from .catalog_utils import (
-    proxy_play_url,
     proxy_subtitle_url,
     rewrite_catalog_list,
     rewrite_series_info,
@@ -68,7 +68,15 @@ def _play_payload(request, user, *, kind: str, stream_id: str | int, ext: str, i
         'type': kind,
         'stream_id': stream_id,
         'ext': ext,
-        'url': proxy_play_url(request, user, kind, stream_id, ext=ext, audio_index=audio_index),
+        **build_playback_urls(
+            request,
+            user,
+            kind=kind,
+            stream_id=stream_id,
+            ext=ext,
+            audio_index=audio_index,
+            ip=ip,
+        ),
         'duration_seconds': media_info.get('duration_seconds'),
         'tracks': {
             'audio': media_info.get('audio', []),
@@ -291,7 +299,13 @@ class LiveStreamUrlView(CatalogBaseView):
         return Response({
             'type': 'live',
             'stream_id': stream_id,
-            'url': proxy_play_url(request, request.user, 'live', stream_id),
+            **build_playback_urls(
+                request,
+                request.user,
+                kind='live',
+                stream_id=stream_id,
+                ip=_client_ip(request),
+            ),
         })
 
 

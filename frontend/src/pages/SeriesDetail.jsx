@@ -58,6 +58,8 @@ export default function SeriesDetail() {
       setPlayer({
         title: episode.title || info?.info?.name,
         url: data.url,
+        fallbackUrl: data.fallbackUrl || null,
+        playbackMode: data.playbackMode || 'proxy',
         type: data.type,
         durationHint: data.duration_seconds || progress?.duration_seconds || 0,
         tracks: data.tracks || null,

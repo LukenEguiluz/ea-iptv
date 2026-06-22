@@ -134,6 +134,8 @@ export function PlaybackProvider({ children }) {
       setPlayer((prev) => ({
         ...prev,
         url: playData.url,
+        fallbackUrl: playData.fallbackUrl || null,
+        playbackMode: playData.playbackMode || prev?.playbackMode,
         tracks: playData.tracks || prev?.tracks,
         durationHint: playData.duration_seconds || prev?.durationHint,
         resumeAt: resumePosition,
@@ -218,6 +220,7 @@ export function PlaybackProvider({ children }) {
         <Player
           title={player.title}
           url={player.url}
+          fallbackUrl={player.fallbackUrl}
           type={player.type}
           epg={player.epg}
           meta={player.meta}
