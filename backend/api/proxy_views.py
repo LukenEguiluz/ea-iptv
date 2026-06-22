@@ -12,7 +12,7 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 from .catalog_utils import (
     load_media_token,
@@ -53,6 +53,72 @@ from .stream_utils import (
 )
 
 SERIES_EXTENSIONS = ('mkv', 'mp4', 'ts')
+THROUGHPUT_LOG_INTERVAL_CHUNKS = 50
+
+
+def _live_proxy_log_path(url: str) -> str:
+    """Ruta del upstream sin host ni credenciales en /live/{user}/{pass}/."""
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return '…'
+    segments = [part for part in (parsed.path or '/').split('/') if part]
+    if len(segments) >= 3 and segments[0] == 'live' and segments[1] != 'play':
+        segments[1] = '*'
+        segments[2] = '*'
+    elif len(segments) >= 3 and segments[0] == 'live' and segments[1] == 'play':
+        segments[2] = '*'
+    path = '/' + '/'.join(segments) if segments else '/'
+    if parsed.query:
+        return f'{path}?…'
+    return path
+
+
+def _live_warm_buffer_size() -> int:
+    return max(0, int(getattr(settings, 'LIVE_WARM_BUFFER_SIZE', 512 * 1024)))
+
+
+def _live_warm_buffer_timeout() -> float:
+    return max(0.0, float(getattr(settings, 'LIVE_WARM_BUFFER_TIMEOUT', 2.0)))
+
+
+def _log_live_throughput_sample(
+    *,
+    chunks: int,
+    bytes_total: int,
+    stream_start: float,
+    log_path: str,
+) -> None:
+    elapsed = time.monotonic() - stream_start
+    rate_kb = int((bytes_total / 1024) / elapsed) if elapsed > 0 else 0
+    logger.info(
+        '[proxy] throughput chunks=%s elapsed=%.1fs rate=%sKB/s url=%s',
+        chunks,
+        elapsed,
+        rate_kb,
+        log_path,
+    )
+
+
+def _log_live_stream_summary(
+    *,
+    chunks: int,
+    bytes_total: int,
+    stream_start: float,
+    log_path: str,
+    event: str,
+) -> None:
+    elapsed = time.monotonic() - stream_start
+    rate_kb = int((bytes_total / 1024) / elapsed) if elapsed > 0 else 0
+    logger.info(
+        'live_proxy %s chunks=%s bytes=%s elapsed=%.1fs rate=%sKB/s url=%s',
+        event,
+        chunks,
+        bytes_total,
+        elapsed,
+        rate_kb,
+        log_path,
+    )
 
 
 def _serve_browser_compatible(
@@ -245,20 +311,92 @@ def _proxy_live_passthrough(
         )
 
     first_byte_ms = int((time.monotonic() - started_at) * 1000)
-    logger.info(
-        'live_proxy first_byte url=%s first_byte_ms=%s bytes=%s',
-        safe_url,
+    log_path = _live_proxy_log_path(play_url)
+    first_byte_log = (
+        'live_proxy first_byte_slow first_byte_ms=%s bytes=%s url=%s'
+        if first_byte_ms > 5000
+        else 'live_proxy first_byte first_byte_ms=%s bytes=%s url=%s'
+    )
+    logger.log(
+        logging.WARNING if first_byte_ms > 5000 else logging.INFO,
+        first_byte_log,
         first_byte_ms,
         len(first_chunk),
+        log_path,
     )
 
+    warm_target = _live_warm_buffer_size()
+    warm_timeout = _live_warm_buffer_timeout()
+    first_chunk_at = time.monotonic()
+
     def stream():
+        chunks_delivered = 0
+        bytes_delivered = 0
+        stream_start = time.monotonic()
+        stream_error = None
+
         try:
-            yield first_chunk
+            if warm_target <= 0:
+                chunks_delivered = 1
+                bytes_delivered = len(first_chunk)
+                yield first_chunk
+            else:
+                warm_parts = [first_chunk]
+                warm_bytes = len(first_chunk)
+                warm_deadline = first_chunk_at + warm_timeout
+                for chunk in iterator:
+                    if not chunk:
+                        continue
+                    warm_parts.append(chunk)
+                    warm_bytes += len(chunk)
+                    chunks_delivered = len(warm_parts)
+                    bytes_delivered = warm_bytes
+                    if warm_bytes >= warm_target or time.monotonic() >= warm_deadline:
+                        break
+                else:
+                    chunks_delivered = len(warm_parts)
+                    bytes_delivered = warm_bytes
+                yield b''.join(warm_parts)
+                if chunks_delivered >= THROUGHPUT_LOG_INTERVAL_CHUNKS:
+                    _log_live_throughput_sample(
+                        chunks=chunks_delivered,
+                        bytes_total=bytes_delivered,
+                        stream_start=stream_start,
+                        log_path=log_path,
+                    )
+
             for chunk in iterator:
-                if chunk:
-                    yield chunk
+                if not chunk:
+                    continue
+                chunks_delivered += 1
+                bytes_delivered += len(chunk)
+                if chunks_delivered % THROUGHPUT_LOG_INTERVAL_CHUNKS == 0:
+                    _log_live_throughput_sample(
+                        chunks=chunks_delivered,
+                        bytes_total=bytes_delivered,
+                        stream_start=stream_start,
+                        log_path=log_path,
+                    )
+                yield chunk
+        except Exception as exc:
+            stream_error = exc
+            logger.warning(
+                'live_proxy stream_error error=%s chunks=%s bytes=%s url=%s',
+                exc,
+                chunks_delivered,
+                bytes_delivered,
+                log_path,
+            )
+            raise
         finally:
+            if chunks_delivered > 0:
+                _log_live_stream_summary(
+                    chunks=chunks_delivered,
+                    bytes_total=bytes_delivered,
+                    stream_start=stream_start,
+                    log_path=log_path,
+                    event='stream_error' if stream_error else 'stream_end',
+                )
             upstream.close()
 
     response = StreamingHttpResponse(

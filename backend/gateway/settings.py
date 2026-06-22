@@ -159,6 +159,9 @@ XTREAM_HTTP_PROXY = os.environ.get('XTREAM_HTTP_PROXY', '').strip()
 CLIENT_DIRECT_PLAYBACK = os.environ.get('CLIENT_DIRECT_PLAYBACK', 'true').lower() == 'true'
 # URLs de stream al navegador con https:// aunque el panel use http:// (evita mixed content).
 XTREAM_CLIENT_STREAM_HTTPS = os.environ.get('XTREAM_CLIENT_STREAM_HTTPS', 'true').lower() == 'true'
+# Live proxy: burst inicial antes del primer yield (reduce starvation en mpegts.js).
+LIVE_WARM_BUFFER_SIZE = int(os.environ.get('LIVE_WARM_BUFFER_SIZE', str(512 * 1024)))
+LIVE_WARM_BUFFER_TIMEOUT = float(os.environ.get('LIVE_WARM_BUFFER_TIMEOUT', '2.0'))
 CATALOG_ENRICH_CAST_ON_SYNC = os.environ.get('CATALOG_ENRICH_CAST_ON_SYNC', 'true').lower() == 'true'
 CATALOG_ENRICH_BATCH_LIMIT = int(os.environ.get('CATALOG_ENRICH_BATCH_LIMIT', '300'))
 
