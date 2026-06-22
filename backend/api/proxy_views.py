@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 
 import requests
 import shutil
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core import signing
 from django.http import HttpResponse, StreamingHttpResponse
@@ -36,6 +37,7 @@ User = get_user_model()
 logger = logging.getLogger(__name__)
 STREAM_CHUNK = 64 * 1024
 LIVE_FIRST_BYTE_TIMEOUT = 10
+LIVE_FIRST_BYTE_TIMEOUT_PROXY = 90
 LIVE_PROXY_READ_TIMEOUT = 300
 from .stream_utils import (
     analyze_stream,
@@ -188,9 +190,10 @@ def _proxy_live_passthrough(
             elapsed_ms,
         )
         upstream.close()
-        return _upstream_error_response(upstream)
+        return _live_upstream_error(upstream)
 
     iterator = upstream.iter_content(chunk_size=STREAM_CHUNK)
+    first_byte_timeout = _live_first_byte_timeout()
 
     def read_first_chunk():
         for chunk in iterator:
@@ -201,14 +204,14 @@ def _proxy_live_passthrough(
     with ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(read_first_chunk)
         try:
-            first_chunk = future.result(timeout=LIVE_FIRST_BYTE_TIMEOUT)
+            first_chunk = future.result(timeout=first_byte_timeout)
         except FuturesTimeoutError:
             upstream.close()
             elapsed_ms = int((time.monotonic() - started_at) * 1000)
             logger.warning(
                 'live_proxy first_byte_timeout url=%s timeout_s=%s elapsed_ms=%s',
                 safe_url,
-                LIVE_FIRST_BYTE_TIMEOUT,
+                first_byte_timeout,
                 elapsed_ms,
             )
             return Response(
@@ -299,6 +302,29 @@ def resolve_series_extension(username: str, password: str, episode_id: str | int
     return None
 
 
+def _live_first_byte_timeout() -> int:
+    if getattr(settings, 'XTREAM_HTTP_PROXY', '').strip():
+        return LIVE_FIRST_BYTE_TIMEOUT_PROXY
+    return LIVE_FIRST_BYTE_TIMEOUT
+
+
+def _live_upstream_error(upstream: requests.Response) -> Response:
+    status = upstream.status_code
+    if status == 509:
+        return Response(
+            {
+                'detail': (
+                    'Límite de conexiones simultáneas del proveedor (509). '
+                    'Cierra otros reproductores IPTV (apps, TV, móvil) y espera 1–2 minutos.'
+                ),
+                'code': 'live_connection_limit',
+                'upstream_status': status,
+            },
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+    return _upstream_error_response(upstream)
+
+
 def _upstream_error_response(upstream: requests.Response):
     return Response(
         {
@@ -386,7 +412,13 @@ class StreamPlayProxyView(APIView):
             upstream_url = _resolve_play_upstream(user, payload)
             client_decode = _client_decode_requested(request)
             if stream_kind == 'live' and not client_decode:
-                if shutil.which('ffmpeg') and live_needs_transcode(upstream_url, PROVIDER_USER_AGENT):
+                bypass_proxy = bool(getattr(settings, 'XTREAM_HTTP_PROXY', '').strip())
+                needs_transcode = (
+                    not bypass_proxy
+                    and shutil.which('ffmpeg')
+                    and live_needs_transcode(upstream_url, PROVIDER_USER_AGENT)
+                )
+                if needs_transcode:
                     logger.info(
                         'live_proxy transcode_start stream_id=%s user_id=%s',
                         payload.get('id'),

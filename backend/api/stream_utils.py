@@ -6,6 +6,7 @@ import threading
 from pathlib import Path
 
 import requests
+from django.conf import settings
 from django.http import FileResponse, HttpResponse, StreamingHttpResponse
 
 STREAM_CHUNK = 64 * 1024
@@ -176,14 +177,24 @@ def _first_stream(streams: list[dict], codec_type: str) -> dict | None:
 
 
 def resolve_live_url(upstream_url: str, user_agent: str) -> str:
+    headers = {'User-Agent': user_agent, 'Range': 'bytes=0-0'}
     try:
-        response = requests.get(
-            upstream_url,
-            headers={'User-Agent': user_agent, 'Range': 'bytes=0-0'},
-            allow_redirects=True,
-            timeout=12,
-            stream=True,
-        )
+        if getattr(settings, 'XTREAM_HTTP_PROXY', '').strip():
+            from api.xtream import provider_stream_get
+            response = provider_stream_get(
+                upstream_url,
+                stream=True,
+                timeout=(12, 30),
+                extra_headers=headers,
+            )
+        else:
+            response = requests.get(
+                upstream_url,
+                headers=headers,
+                allow_redirects=True,
+                timeout=12,
+                stream=True,
+            )
         final_url = response.url
         response.close()
         return final_url
