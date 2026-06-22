@@ -29,6 +29,14 @@ export function logPlaybackError(source, message, details = {}) {
   console.error('[IPTV Playback]', text, entry)
 }
 
+export function logPlaybackInfo(source, message, details = {}) {
+  console.info('[IPTV Playback]', message, {
+    source,
+    timestamp: new Date().toISOString(),
+    ...details,
+  })
+}
+
 export function logPlaybackWarn(source, message, details = {}) {
   console.warn('[IPTV Playback]', message, { source, timestamp: new Date().toISOString(), ...details })
 }

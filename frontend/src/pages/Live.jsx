@@ -78,6 +78,7 @@ export default function Live() {
         title="Cargando canales"
         loaded={streams.length}
         total={total}
+        source="live-page"
       />
       <SearchBar
         type="live"

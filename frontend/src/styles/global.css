@@ -857,7 +857,8 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.72);
+  background: rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(2px);
   pointer-events: none;
 }
 
@@ -869,9 +870,10 @@ button {
   width: min(20rem, 88vw);
   padding: 1.25rem 1rem;
   border-radius: 0.85rem;
-  background: rgba(18, 18, 26, 0.92);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(18, 18, 26, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   text-align: center;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
 }
 
 .player-load-card strong {
@@ -1460,8 +1462,8 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(8, 10, 18, 0.82);
-  backdrop-filter: blur(6px);
+  background: rgba(8, 10, 18, 0.32);
+  backdrop-filter: blur(3px);
 }
 
 .catalog-load-card {

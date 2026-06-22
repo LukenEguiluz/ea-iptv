@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchPaginatedCatalog } from '../api'
+import { logCatalogInfo } from '../utils/catalogLog'
 
 const ALL_CATEGORY = 'all'
 const PAGE_SIZE = 300
@@ -19,9 +20,11 @@ export default function usePaginatedCatalog(catalogType) {
     const isMore = append && offset > 0
     if (isMore) {
       setLoadingMore(true)
+      logCatalogInfo('paginate', `Cargando más (${catalogType})`, { categoryId, offset })
     } else {
       setLoading(true)
       setError('')
+      logCatalogInfo('paginate', `Cargando catálogo (${catalogType})`, { categoryId, offset })
     }
 
     try {

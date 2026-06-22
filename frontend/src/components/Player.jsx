@@ -39,7 +39,7 @@ import {
   shouldUseAvbridgeForVod,
   stripClientDecode,
 } from '../utils/avbridgePlayer'
-import { logPlaybackError, logPlaybackWarn } from '../utils/playbackLog'
+import { logPlaybackError, logPlaybackInfo, logPlaybackWarn } from '../utils/playbackLog'
 
 function formatTime(seconds) {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00'
@@ -222,9 +222,23 @@ export default function Player({
   }, [isFullscreen, scheduleUiHide])
 
   const liveStatusRef = useRef(liveStatus)
+  const loadOverlayVisibleRef = useRef(false)
   useEffect(() => {
     liveStatusRef.current = liveStatus
   }, [liveStatus])
+
+  useEffect(() => {
+    if (!isLive) return undefined
+    logPlaybackInfo('player.liveStatus', `Estado live: ${liveStatus}`, {
+      title,
+      url,
+      switching,
+      isWaiting,
+      loadPhase,
+      prepPercent,
+    })
+    return undefined
+  }, [isLive, liveStatus, title, url, switching, isWaiting, loadPhase, prepPercent])
 
   useEffect(() => {
     onLiveReconnectRef.current = onLiveReconnect
@@ -838,6 +852,14 @@ export default function Player({
     }
     const onWaiting = () => {
       setIsWaiting(true)
+      logPlaybackInfo('player.buffering', 'Buffering (evento waiting)', {
+        title,
+        url,
+        type,
+        isLive,
+        readyState: video.readyState,
+        networkState: video.networkState,
+      })
       if (isLive) {
         setLiveStatus('buffering')
         clearWaitingReconnectTimer()
@@ -851,6 +873,12 @@ export default function Player({
       clearWaitingReconnectTimer()
       setPrepPercent(100)
       setLoadPhase('playing')
+      logPlaybackInfo('player.buffering', 'Reproducción reanudada (evento playing)', {
+        title,
+        url,
+        type,
+        isLive,
+      })
       if (isLive) {
         setLiveStatus('live')
         stallTicksRef.current = 0
@@ -1307,6 +1335,45 @@ export default function Player({
     }
   }, [showGuide, showLoadOverlay, switching, error, isFullscreen, scheduleUiHide])
 
+  useEffect(() => {
+    if (showLoadOverlay === loadOverlayVisibleRef.current) return undefined
+    loadOverlayVisibleRef.current = showLoadOverlay
+
+    const overlayLabel = liveStatus === 'reconnecting'
+      ? 'Reconectando'
+      : (isWaiting ? 'Buffering' : (isSeeking ? 'Seeking' : loadPhaseLabel))
+
+    logPlaybackInfo(
+      'player.loadOverlay',
+      showLoadOverlay ? `Pantalla de carga visible: ${overlayLabel}` : 'Pantalla de carga oculta',
+      {
+        title,
+        url,
+        type,
+        showLoadOverlay,
+        liveStatus,
+        loadPhase,
+        isWaiting,
+        isSeeking,
+        switching,
+        prepPercent: displayPrepPercent,
+      },
+    )
+    return undefined
+  }, [
+    showLoadOverlay,
+    liveStatus,
+    isWaiting,
+    isSeeking,
+    loadPhase,
+    loadPhaseLabel,
+    title,
+    url,
+    type,
+    switching,
+    displayPrepPercent,
+  ])
+
   return (
     <div
       className={`player-overlay${hidePlayerChrome ? ' player-overlay--ui-hidden' : ''}`}
@@ -1414,7 +1481,8 @@ export default function Player({
                 minWidth: 260,
                 maxWidth: 360,
                 textAlign: 'center',
-                bgcolor: 'rgba(22, 22, 31, 0.95)',
+                bgcolor: 'rgba(22, 22, 31, 0.82)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
               }}
             >
               <CircularProgress size={40} sx={{ mb: 2 }} />
