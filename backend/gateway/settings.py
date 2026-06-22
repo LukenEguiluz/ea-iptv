@@ -126,6 +126,14 @@ else:
     CORS_ALLOW_ALL_ORIGINS = DEBUG
 
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = (
+    'accept',
+    'authorization',
+    'content-type',
+    'origin',
+    'user-agent',
+    'x-requested-with',
+)
 
 GATEWAY_PUBLIC_URL = os.environ.get('GATEWAY_PUBLIC_URL', '').strip().rstrip('/')
 
@@ -149,6 +157,8 @@ CATALOG_SYNC_XTREAM_READ_TIMEOUT = float(os.environ.get('CATALOG_SYNC_XTREAM_REA
 XTREAM_HTTP_PROXY = os.environ.get('XTREAM_HTTP_PROXY', '').strip()
 # Reproducción directa navegador → proveedor (estilo TiviMate). El proxy VM solo como fallback.
 CLIENT_DIRECT_PLAYBACK = os.environ.get('CLIENT_DIRECT_PLAYBACK', 'true').lower() == 'true'
+# URLs de stream al navegador con https:// aunque el panel use http:// (evita mixed content).
+XTREAM_CLIENT_STREAM_HTTPS = os.environ.get('XTREAM_CLIENT_STREAM_HTTPS', 'true').lower() == 'true'
 CATALOG_ENRICH_CAST_ON_SYNC = os.environ.get('CATALOG_ENRICH_CAST_ON_SYNC', 'true').lower() == 'true'
 CATALOG_ENRICH_BATCH_LIMIT = int(os.environ.get('CATALOG_ENRICH_BATCH_LIMIT', '300'))
 

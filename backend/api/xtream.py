@@ -157,6 +157,38 @@ def _server_url() -> str:
     return url
 
 
+def _client_stream_server_url() -> str:
+    """URL del proveedor para el navegador (HTTPS si la página es HTTPS)."""
+    url = _server_url()
+    if getattr(settings, 'XTREAM_CLIENT_STREAM_HTTPS', True) and url.startswith('http://'):
+        return f'https://{url[7:]}'
+    return url
+
+
+def live_stream_url(username: str, password: str, stream_id: str | int) -> str:
+    return f'{_server_url()}/live/{username}/{password}/{stream_id}.ts'
+
+
+def client_live_stream_url(username: str, password: str, stream_id: str | int) -> str:
+    return f'{_client_stream_server_url()}/live/{username}/{password}/{stream_id}.ts'
+
+
+def vod_stream_url(username: str, password: str, stream_id: str | int, ext: str = 'mp4') -> str:
+    return f'{_server_url()}/movie/{username}/{password}/{stream_id}.{ext.lstrip(".")}'
+
+
+def client_vod_stream_url(username: str, password: str, stream_id: str | int, ext: str = 'mp4') -> str:
+    return f'{_client_stream_server_url()}/movie/{username}/{password}/{stream_id}.{ext.lstrip(".")}'
+
+
+def series_stream_url(username: str, password: str, episode_id: str | int, ext: str = 'mp4') -> str:
+    return f'{_server_url()}/series/{username}/{password}/{episode_id}.{ext.lstrip(".")}'
+
+
+def client_series_stream_url(username: str, password: str, episode_id: str | int, ext: str = 'mp4') -> str:
+    return f'{_client_stream_server_url()}/series/{username}/{password}/{episode_id}.{ext.lstrip(".")}'
+
+
 def _player_api_url() -> str:
     return f'{_server_url()}/player_api.php'
 
@@ -316,18 +348,6 @@ def xtream_sync_request(
         on_retry=on_retry,
         **params,
     )
-
-
-def live_stream_url(username: str, password: str, stream_id: str | int) -> str:
-    return f'{_server_url()}/live/{username}/{password}/{stream_id}.ts'
-
-
-def vod_stream_url(username: str, password: str, stream_id: str | int, ext: str = 'mp4') -> str:
-    return f'{_server_url()}/movie/{username}/{password}/{stream_id}.{ext.lstrip(".")}'
-
-
-def series_stream_url(username: str, password: str, episode_id: str | int, ext: str = 'mp4') -> str:
-    return f'{_server_url()}/series/{username}/{password}/{episode_id}.{ext.lstrip(".")}'
 
 
 def probe_xtream(username: str, password: str, *, timeout: float | tuple[float, float] = (12, 30)) -> None:

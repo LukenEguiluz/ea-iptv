@@ -1,8 +1,12 @@
 from django.conf import settings
 
 from api.catalog_utils import proxy_play_url
-from api.xtream import live_stream_url, series_stream_url, vod_stream_url
-from sessions.services import get_credentials
+from api.xtream import (
+    client_live_stream_url,
+    client_series_stream_url,
+    client_vod_stream_url,
+    get_credentials,
+)
 
 
 def client_direct_playback_enabled() -> bool:
@@ -17,10 +21,10 @@ def provider_stream_url(
     ext: str = '',
 ) -> str:
     if kind == 'live':
-        return live_stream_url(username, password, stream_id)
+        return client_live_stream_url(username, password, stream_id)
     if kind == 'vod':
-        return vod_stream_url(username, password, stream_id, ext=ext)
-    return series_stream_url(username, password, stream_id, ext=ext)
+        return client_vod_stream_url(username, password, stream_id, ext=ext)
+    return client_series_stream_url(username, password, stream_id, ext=ext)
 
 
 def build_playback_urls(

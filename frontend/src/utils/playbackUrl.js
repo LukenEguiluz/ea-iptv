@@ -1,5 +1,14 @@
 import { resolveApiUrl } from '../config'
-import { logPlaybackInfo, logPlaybackWarn } from './playbackLog'
+import { logPlaybackInfo } from './playbackLog'
+
+/** Presenta stream HTTP como HTTPS (mismo host) para evitar mixed content en la web. */
+export function presentHttpsStreamUrl(url) {
+  if (!url) return url
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+    return url.replace(/^http:\/\//i, 'https://')
+  }
+  return url
+}
 
 export function isMixedContentUrl(url) {
   if (!url || typeof window === 'undefined') return false
@@ -7,35 +16,27 @@ export function isMixedContentUrl(url) {
 }
 
 /**
- * Elige URL directa al proveedor (navegador → CDN) o proxy VM como fallback.
- * En HTTPS + stream HTTP el navegador bloquea mixed content → usa proxy.
+ * URL directa al proveedor con esquema HTTPS en página HTTPS.
+ * Si falla la conexión, el reproductor usa proxy_url (túnel HTTPS real vía API).
  */
 export function resolvePlaybackUrls(playData) {
-  const directUrl = playData.direct_url
+  const rawDirect = playData.direct_url
     || (playData.playback_mode === 'direct' ? playData.url : null)
   const proxyUrl = playData.proxy_url ? resolveApiUrl(playData.proxy_url) : null
-  const forceDirect = import.meta.env.VITE_FORCE_DIRECT_STREAMS === 'true'
-  const canUseDirect = Boolean(directUrl)
-    && (forceDirect || !isMixedContentUrl(directUrl))
+  const streamUrl = presentHttpsStreamUrl(rawDirect || playData.url)
 
-  if (canUseDirect) {
-    logPlaybackInfo('playback.url', 'Reproducción directa al proveedor (sin proxy VM)', {
+  if (streamUrl && playData.playback_mode === 'direct') {
+    logPlaybackInfo('playback.url', 'Stream directo (HTTPS al proveedor)', {
       playbackMode: 'direct',
-      url: directUrl,
+      url: streamUrl,
+      hasProxyFallback: Boolean(proxyUrl),
     })
     return {
-      url: directUrl,
-      fallbackUrl: proxyUrl && proxyUrl !== directUrl ? proxyUrl : null,
+      url: streamUrl,
+      fallbackUrl: proxyUrl && proxyUrl !== streamUrl ? proxyUrl : null,
       playbackMode: 'direct',
-      directUrl,
+      directUrl: rawDirect || null,
     }
-  }
-
-  if (directUrl && isMixedContentUrl(directUrl)) {
-    logPlaybackWarn('playback.url', 'Stream HTTP bloqueado en página HTTPS — usando proxy VM', {
-      directUrl,
-      proxyUrl,
-    })
   }
 
   const url = proxyUrl || resolveApiUrl(playData.url)
@@ -43,7 +44,7 @@ export function resolvePlaybackUrls(playData) {
     url,
     fallbackUrl: null,
     playbackMode: 'proxy',
-    directUrl: directUrl || null,
+    directUrl: rawDirect || null,
   }
 }
 
