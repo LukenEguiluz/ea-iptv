@@ -26,6 +26,7 @@ from .xtream import (
     _server_url,
     get_credentials,
     live_stream_url,
+    provider_stream_get,
     series_stream_url,
     vod_stream_url,
 )
@@ -34,7 +35,7 @@ User = get_user_model()
 logger = logging.getLogger(__name__)
 STREAM_CHUNK = 64 * 1024
 LIVE_FIRST_BYTE_TIMEOUT = 10
-LIVE_PROXY_READ_TIMEOUT = 120
+LIVE_PROXY_READ_TIMEOUT = 300
 from .stream_utils import (
     analyze_stream,
     cache_path,
@@ -125,12 +126,11 @@ def _proxy_response(upstream: requests.Response, extra_headers: dict | None = No
 
 def _fetch_upstream(url: str, request, *, kind: str = '') -> requests.Response:
     read_timeout = LIVE_PROXY_READ_TIMEOUT if kind == 'live' else 120
-    return requests.get(
+    return provider_stream_get(
         url,
-        headers=_upstream_headers(request, kind=kind),
         stream=True,
         timeout=(10, read_timeout),
-        allow_redirects=True,
+        extra_headers=_upstream_headers(request, kind=kind),
     )
 
 

@@ -46,6 +46,26 @@ def _xtream_session() -> requests.Session:
     return session
 
 
+def provider_stream_get(
+    url: str,
+    *,
+    stream: bool = True,
+    timeout: float | tuple[float, float] = (10, 300),
+    extra_headers: dict[str, str] | None = None,
+) -> requests.Response:
+    """GET al proveedor (streams TS/HLS) usando proxy Xtream si está configurado."""
+    headers = xtream_request_headers()
+    if extra_headers:
+        headers.update(extra_headers)
+    return _xtream_session().get(
+        url,
+        headers=headers,
+        stream=stream,
+        timeout=timeout,
+        allow_redirects=True,
+    )
+
+
 class XtreamError(Exception):
     def __init__(self, message: str, code: str = 'xtream_error'):
         self.message = message

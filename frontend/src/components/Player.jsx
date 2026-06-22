@@ -69,7 +69,8 @@ const LIVE_STATUS_LABELS = {
 
 const LIVE_RECONNECT_BASE_MS = 2500
 const LIVE_RECONNECT_MAX_MS = 30000
-const LIVE_WAITING_RECONNECT_MS = 12000
+const LIVE_WAITING_RECONNECT_MS = 20000
+const LIVE_BUFFER_OVERLAY_DELAY_MS = 2500
 
 const READY_STATE_PERCENT = [8, 28, 52, 78, 100]
 const FULLSCREEN_UI_HIDE_MS = 3000
@@ -144,6 +145,8 @@ export default function Player({
   const [prepPercent, setPrepPercent] = useState(0)
   const [bufferPercent, setBufferPercent] = useState(0)
   const [isWaiting, setIsWaiting] = useState(false)
+  const [showBufferingOverlay, setShowBufferingOverlay] = useState(false)
+  const bufferingOverlayTimerRef = useRef(null)
   const [isSeeking, setIsSeeking] = useState(false)
   const [scrubTime, setScrubTime] = useState(0)
   const [isScrubbing, setIsScrubbing] = useState(false)
@@ -222,23 +225,24 @@ export default function Player({
   }, [isFullscreen, scheduleUiHide])
 
   const liveStatusRef = useRef(liveStatus)
+  const prevLiveStatusLogRef = useRef('')
   const loadOverlayVisibleRef = useRef(false)
   useEffect(() => {
     liveStatusRef.current = liveStatus
   }, [liveStatus])
 
   useEffect(() => {
-    if (!isLive) return undefined
+    if (!isLive || liveStatus === prevLiveStatusLogRef.current) return undefined
+    prevLiveStatusLogRef.current = liveStatus
     logPlaybackInfo('player.liveStatus', `Estado live: ${liveStatus}`, {
       title,
       url,
       switching,
       isWaiting,
       loadPhase,
-      prepPercent,
     })
     return undefined
-  }, [isLive, liveStatus, title, url, switching, isWaiting, loadPhase, prepPercent])
+  }, [isLive, liveStatus, title, url, switching, isWaiting, loadPhase])
 
   useEffect(() => {
     onLiveReconnectRef.current = onLiveReconnect
@@ -756,13 +760,14 @@ export default function Player({
         url: playbackUrl,
       }, {
         enableWorker: false,
-        enableStashBuffer: false,
+        enableStashBuffer: true,
+        stashInitialSize: 768 * 1024,
         lazyLoad: false,
-        liveBufferLatencyChasing: false,
-        liveSync: false,
+        liveBufferLatencyChasing: true,
+        liveSync: true,
         autoCleanupSourceBuffer: true,
-        autoCleanupMaxBackwardDuration: 120,
-        autoCleanupMinBackwardDuration: 60,
+        autoCleanupMaxBackwardDuration: 180,
+        autoCleanupMinBackwardDuration: 90,
       })
       mpegtsPlayer.attachMediaElement(video)
       mpegtsPlayer.load()
@@ -1319,12 +1324,53 @@ export default function Player({
     idle: 'Preparando',
   }[loadPhase] || 'Cargando'
 
-  const showLoadOverlay = prepPercent < 100 || isWaiting || isSeeking || liveStatus === 'reconnecting'
-    || loadPhase === 'avbridge'
-    || (isLive && (liveStatus === 'connecting' || liveStatus === 'buffering'))
-  const displayPrepPercent = isLive && liveStatus === 'buffering'
+  const showLoadOverlay = prepPercent < 100 || isSeeking || liveStatus === 'reconnecting'
+    || loadPhase === 'avbridge' || loadPhase === 'converting'
+    || (isLive && liveStatus === 'connecting')
+    || (isLive && showBufferingOverlay)
+    || (!isLive && isWaiting)
+  const displayPrepPercent = isLive && (liveStatus === 'buffering' || showBufferingOverlay)
     ? Math.max(prepPercent, 55)
     : prepPercent
+
+  useEffect(() => {
+    if (bufferingOverlayTimerRef.current) {
+      window.clearTimeout(bufferingOverlayTimerRef.current)
+      bufferingOverlayTimerRef.current = null
+    }
+
+    if (!isLive) {
+      setShowBufferingOverlay(isWaiting)
+      return undefined
+    }
+
+    const initialLoad = prepPercent < 100 || liveStatus === 'connecting' || liveStatus === 'reconnecting'
+    if (initialLoad) {
+      setShowBufferingOverlay(false)
+      return undefined
+    }
+
+    if (!isWaiting && liveStatus !== 'buffering') {
+      setShowBufferingOverlay(false)
+      return undefined
+    }
+
+    bufferingOverlayTimerRef.current = window.setTimeout(() => {
+      setShowBufferingOverlay(true)
+      logPlaybackInfo('player.buffering', 'Buffering sostenido (>2.5s) — mostrando overlay', {
+        title,
+        url,
+        liveStatus,
+      })
+    }, LIVE_BUFFER_OVERLAY_DELAY_MS)
+
+    return () => {
+      if (bufferingOverlayTimerRef.current) {
+        window.clearTimeout(bufferingOverlayTimerRef.current)
+        bufferingOverlayTimerRef.current = null
+      }
+    }
+  }, [isLive, isWaiting, liveStatus, prepPercent, title, url])
 
   const hidePlayerChrome = isFullscreen && !uiVisible && !showGuide
 
