@@ -28,6 +28,7 @@ from .xtream import (
     live_stream_url,
     provider_stream_get,
     series_stream_url,
+    should_use_provider_proxy,
     vod_stream_url,
 )
 
@@ -126,11 +127,20 @@ def _proxy_response(upstream: requests.Response, extra_headers: dict | None = No
 
 def _fetch_upstream(url: str, request, *, kind: str = '') -> requests.Response:
     read_timeout = LIVE_PROXY_READ_TIMEOUT if kind == 'live' else 120
-    return provider_stream_get(
+    headers = _upstream_headers(request, kind=kind)
+    if kind == 'live' or should_use_provider_proxy(url):
+        return provider_stream_get(
+            url,
+            stream=True,
+            timeout=(10, read_timeout),
+            extra_headers=headers,
+        )
+    return requests.get(
         url,
+        headers=headers,
         stream=True,
         timeout=(10, read_timeout),
-        extra_headers=_upstream_headers(request, kind=kind),
+        allow_redirects=True,
     )
 
 

@@ -2,6 +2,7 @@ from django.conf import settings
 import logging
 import threading
 import time
+from urllib.parse import urlparse
 
 import requests
 
@@ -19,6 +20,40 @@ PROVIDER_USER_AGENT = (
 )
 
 _thread_local = threading.local()
+
+_PROVIDER_HOST_ALIASES = frozenset({
+    'line.trxdnscloud.ru',
+    'line.vpntxvpn.ru',
+})
+
+
+def provider_hostnames() -> set[str]:
+    hosts = set(_PROVIDER_HOST_ALIASES)
+    server = getattr(settings, 'XTREAM_SERVER_URL', '').strip().rstrip('/')
+    if server:
+        if not server.startswith(('http://', 'https://')):
+            server = f'http://{server}'
+        hostname = urlparse(server).hostname
+        if hostname:
+            hosts.add(hostname.lower())
+    return hosts
+
+
+def provider_request_proxies() -> dict[str, str] | None:
+    proxy = getattr(settings, 'XTREAM_HTTP_PROXY', '').strip()
+    if not proxy:
+        return None
+    return {'http': proxy, 'https': proxy}
+
+
+def should_use_provider_proxy(url: str) -> bool:
+    if not provider_request_proxies():
+        return False
+    try:
+        hostname = (urlparse(url).hostname or '').lower()
+    except ValueError:
+        return False
+    return hostname in provider_hostnames()
 
 
 def xtream_request_headers() -> dict[str, str]:
@@ -39,9 +74,6 @@ def _xtream_session() -> requests.Session:
     if session is None:
         session = requests.Session()
         session.headers.update(xtream_request_headers())
-        proxy = getattr(settings, 'XTREAM_HTTP_PROXY', '').strip()
-        if proxy:
-            session.proxies.update({'http': proxy, 'https': proxy})
         _thread_local.xtream_session = session
     return session
 
@@ -53,7 +85,7 @@ def provider_stream_get(
     timeout: float | tuple[float, float] = (10, 300),
     extra_headers: dict[str, str] | None = None,
 ) -> requests.Response:
-    """GET al proveedor (streams TS/HLS) usando proxy Xtream si está configurado."""
+    """GET al proveedor Xtream (streams/API) con bypass residencial si aplica."""
     headers = xtream_request_headers()
     if extra_headers:
         headers.update(extra_headers)
@@ -63,6 +95,7 @@ def provider_stream_get(
         stream=stream,
         timeout=timeout,
         allow_redirects=True,
+        proxies=provider_request_proxies(),
     )
 
 
@@ -189,6 +222,7 @@ def xtream_raw_request(
                 params=query,
                 timeout=request_timeout,
                 headers=xtream_request_headers(),
+                proxies=provider_request_proxies(),
             )
             response.raise_for_status()
         except requests.RequestException as exc:
