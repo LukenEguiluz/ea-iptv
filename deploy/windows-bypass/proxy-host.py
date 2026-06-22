@@ -1,25 +1,28 @@
 #!/usr/bin/env python3
 """Proxy HTTP en Windows para bypass Xtream (ZeroTier EA_VPN).
 
-Soporta GET/POST (HTTP) y CONNECT (HTTPS tunnel).
-Solo trafico del servidor VM (10.234.232.x) hacia el proveedor Xtream.
+- GET/POST con streaming (catálogos grandes y TV en vivo)
+- CONNECT para HTTPS tunnel
 """
 
 from __future__ import annotations
 
+import http.client
 import json
 import select
 import socket
 import sys
-import threading
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
 
 LISTEN_HOST = "0.0.0.0"
 LISTEN_PORT = 8888
 ALLOW_PREFIXES = ("127.", "10.234.232.", "172.", "192.168.")
-TUNNEL_TIMEOUT = 300
+TUNNEL_TIMEOUT = 600
+API_READ_TIMEOUT = 300
+CONNECT_TIMEOUT = 30
 RELAY_CHUNK = 65536
 
 USER_AGENT = (
@@ -32,14 +35,17 @@ def client_allowed(host: str) -> bool:
     return host.startswith(ALLOW_PREFIXES)
 
 
+def is_stream_url(url: str) -> bool:
+    lower = url.lower()
+    return "/live/" in lower or lower.endswith(".ts") or "/movie/" in lower or "/series/" in lower
+
+
 def relay_sockets(client: socket.socket, remote: socket.socket) -> None:
     sockets = [client, remote]
     try:
         while True:
             readable, _, errored = select.select(sockets, [], sockets, TUNNEL_TIMEOUT)
-            if errored:
-                break
-            if not readable:
+            if errored or not readable:
                 break
             for sock in readable:
                 other = remote if sock is client else client
@@ -67,7 +73,7 @@ def relay_sockets(client: socket.socket, remote: socket.socket) -> None:
 
 class ProxyHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
-    timeout = 45
+    timeout = CONNECT_TIMEOUT
 
     def log_message(self, fmt: str, *args) -> None:
         sys.stderr.write("[proxy] %s - %s\n" % (self.client_address[0], fmt % args))
@@ -75,12 +81,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
     def handle_one_request(self) -> None:
         try:
             super().handle_one_request()
-        except ConnectionResetError:
-            pass
-        except BrokenPipeError:
+        except (ConnectionResetError, BrokenPipeError):
             pass
         except OSError as exc:
-            if exc.winerror not in (10054, 10053):  # reset / aborted on Windows
+            winerror = getattr(exc, "winerror", None)
+            if winerror not in (10054, 10053, None):
                 raise
 
     def do_CONNECT(self) -> None:
@@ -95,20 +100,18 @@ class ProxyHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            remote = socket.create_connection((host, port), timeout=30)
+            remote = socket.create_connection((host, port), timeout=CONNECT_TIMEOUT)
             remote.settimeout(TUNNEL_TIMEOUT)
         except OSError as exc:
-            self.log_message('CONNECT %s:%s failed: %s', host, port, exc)
+            self.log_message("CONNECT %s:%s failed: %s", host, port, exc)
             self.send_error(502, "Connect failed")
             return
 
         self.send_response(200, "Connection Established")
-        self.send_header("Proxy-Agent", "ea-iptv-bypass/1.1")
+        self.send_header("Proxy-Agent", "ea-iptv-bypass/1.2")
         self.end_headers()
-
-        client = self.connection
-        client.settimeout(TUNNEL_TIMEOUT)
-        relay_sockets(client, remote)
+        self.connection.settimeout(TUNNEL_TIMEOUT)
+        relay_sockets(self.connection, remote)
 
     def do_GET(self) -> None:
         self._handle()
@@ -118,6 +121,24 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
     def do_HEAD(self) -> None:
         self._handle(head_only=True)
+
+    def _open_upstream(self, url: str):
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("unsupported scheme")
+        host = parsed.hostname
+        if not host:
+            raise ValueError("missing host")
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        path = parsed.path or "/"
+        if parsed.query:
+            path = "%s?%s" % (path, parsed.query)
+
+        if parsed.scheme == "https":
+            conn = http.client.HTTPSConnection(host, port, timeout=CONNECT_TIMEOUT)
+        else:
+            conn = http.client.HTTPConnection(host, port, timeout=CONNECT_TIMEOUT)
+        return conn, host, path
 
     def _handle(self, head_only: bool = False) -> None:
         if not client_allowed(self.client_address[0]):
@@ -134,37 +155,76 @@ class ProxyHandler(BaseHTTPRequestHandler):
         headers = {
             k: v
             for k, v in self.headers.items()
-            if k.lower() not in ("host", "proxy-connection", "connection", "content-length")
+            if k.lower() not in ("host", "proxy-connection", "connection", "content-length", "proxy-authorization")
         }
         headers["User-Agent"] = USER_AGENT
+        headers["Connection"] = "close"
 
-        req = urllib.request.Request(url, data=body, headers=headers, method=self.command)
+        stream_mode = is_stream_url(url)
+        read_timeout = TUNNEL_TIMEOUT if stream_mode else API_READ_TIMEOUT
+
+        conn = None
         try:
-            with urllib.request.urlopen(req, timeout=45) as upstream:
-                payload = upstream.read()
-                self.send_response(upstream.status)
-                for key, value in upstream.headers.items():
-                    if key.lower() in ("transfer-encoding", "connection", "proxy-connection"):
-                        continue
-                    self.send_header(key, value)
-                self.send_header("Content-Length", str(len(payload)))
-                self.end_headers()
-                if not head_only:
-                    self.wfile.write(payload)
+            conn, host, path = self._open_upstream(url)
+            conn.request(self.command, path, body=body, headers={**headers, "Host": host})
+            upstream = conn.getresponse()
+
+            self.send_response(upstream.status)
+            for key, value in upstream.getheaders():
+                lower = key.lower()
+                if lower in ("transfer-encoding", "connection", "proxy-connection", "keep-alive"):
+                    continue
+                self.send_header(key, value)
+            self.end_headers()
+
+            if head_only:
+                upstream.read()
+                return
+
+            if conn.sock:
+                conn.sock.settimeout(read_timeout)
+
+            total = 0
+            while True:
+                chunk = upstream.read(RELAY_CHUNK)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                self.wfile.flush()
+                total += len(chunk)
+
+            if stream_mode:
+                self.log_message('streamed %s bytes %s', total, url[:80])
+
+        except TimeoutError as exc:
+            self.log_message("timeout %s (%s)", url[:100], exc)
+            if not self.wfile.closed:
+                try:
+                    self.send_error(504, "Upstream timeout")
+                except Exception:
+                    pass
         except urllib.error.HTTPError as exc:
             payload = exc.read()
             self.send_response(exc.code)
             self.send_header("Content-Type", exc.headers.get("Content-Type", "text/plain"))
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
-            if not head_only:
-                self.wfile.write(payload)
+            self.wfile.write(payload)
         except Exception as exc:
-            self.send_error(502, "Upstream failed: %s" % exc)
+            self.log_message("upstream error %s: %s", url[:100], exc)
+            try:
+                self.send_error(502, "Upstream failed: %s" % exc)
+            except Exception:
+                pass
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
 
 def main() -> None:
-    socket.setdefaulttimeout(45)
     server = ThreadingHTTPServer((LISTEN_HOST, LISTEN_PORT), ProxyHandler)
     print(
         json.dumps(
@@ -174,6 +234,9 @@ def main() -> None:
                 "port": LISTEN_PORT,
                 "xtream_base": "line.trxdnscloud.ru",
                 "connect_tunnel": True,
+                "streaming": True,
+                "api_timeout_s": API_READ_TIMEOUT,
+                "stream_timeout_s": TUNNEL_TIMEOUT,
             }
         ),
         flush=True,
